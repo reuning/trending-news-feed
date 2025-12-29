@@ -1,0 +1,8 @@
+{
+  "decay_rate": 0.05,
+  "max_age_hours": 168,
+  "min_share_count": 1,
+  "min_repost_count": 0,
+  "repost_weight": 1.0,
+  "results_limit": 50
+}

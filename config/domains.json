@@ -1,0 +1,10 @@
+{
+  "domains": [
+    "nytimes.com",
+    "washingtonpost.com",
+    "bbc.com",
+    "reuters.com",
+    "apnews.com"
+  ],
+  "match_subdomains": true
+}
