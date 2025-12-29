@@ -29,7 +29,7 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", "./data/feed.db")
 BSKY_HANDLE = os.getenv("BSKY_HANDLE", "")
 
 # Extract DID from hostname for feed URI
-# In production, this would be a proper DID
+# Using did:web method - DID is derived from the FEED_HOSTNAME
 FEED_DID = f"did:web:{FEED_HOSTNAME.replace('http://', '').replace('https://', '').split(':')[0]}"
 FEED_URI = f"at://{FEED_DID}/app.bsky.feed.generator/domain-news"
 

@@ -53,6 +53,8 @@ class FirehoseListener:
         self._reposts_processed = 0
         self._reposts_tracked = 0
         self._errors = 0
+        self._processing_tasks = set()  # Track background tasks
+        self._max_concurrent_tasks = 100  # Limit concurrent processing
 
     async def start(self):
         """
@@ -74,12 +76,19 @@ class FirehoseListener:
                     return
                 
                 logger.debug(f"Received message from firehose")
-                try:
-                    await self._process_message(message)
-                except Exception as e:
-                    self._errors += 1
-                    logger.error(f"Error processing message: {e}", exc_info=True)
-                    # Continue processing despite errors
+                
+                # Process message in background to avoid blocking the firehose
+                # This prevents ConsumerTooSlow errors
+                task = asyncio.create_task(self._process_message_wrapper(message))
+                self._processing_tasks.add(task)
+                task.add_done_callback(self._processing_tasks.discard)
+                
+                # If we have too many concurrent tasks, wait for some to complete
+                if len(self._processing_tasks) >= self._max_concurrent_tasks:
+                    logger.warning(f"Processing queue full ({len(self._processing_tasks)} tasks), waiting...")
+                    # Wait for at least half to complete before continuing
+                    while len(self._processing_tasks) >= self._max_concurrent_tasks // 2:
+                        await asyncio.sleep(0.1)
             
             # Start listening to the firehose with async callback
             logger.info("Connecting to firehose...")
@@ -94,6 +103,20 @@ class FirehoseListener:
                 f"Firehose listener stopped. "
                 f"Processed: {self._posts_processed}, Errors: {self._errors}"
             )
+
+    async def _process_message_wrapper(self, message):
+        """
+        Wrapper for processing messages that handles errors.
+        
+        Args:
+            message: Raw message from the firehose
+        """
+        try:
+            await self._process_message(message)
+        except Exception as e:
+            self._errors += 1
+            logger.error(f"Error processing message: {e}", exc_info=True)
+            # Continue processing despite errors
 
     async def _process_message(self, message):
         """
@@ -361,6 +384,12 @@ class FirehoseListener:
         """Stop the firehose listener gracefully."""
         logger.info("Stopping firehose listener...")
         self._running = False
+        
+        # Wait for all background tasks to complete
+        if self._processing_tasks:
+            logger.info(f"Waiting for {len(self._processing_tasks)} background tasks to complete...")
+            await asyncio.gather(*self._processing_tasks, return_exceptions=True)
+            logger.info("All background tasks completed")
         
         # Give it a moment to finish current message
         await asyncio.sleep(1)
