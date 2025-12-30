@@ -8,6 +8,7 @@ description, and skeleton generation.
 
 import os
 import logging
+import asyncio
 from typing import Optional
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -385,20 +386,40 @@ async def preview_feed(
         # Get ranked posts - fetch more than needed since some may be filtered out
         ranked_posts = await ranking_engine.rank_posts(limit=limit * 2)
         
-        # Hydrate posts and filter out non-public ones
+        # Hydrate posts concurrently for much better performance
+        # Create all hydration tasks at once
+        hydration_tasks = [_hydrate_post(post['uri']) for post in ranked_posts]
+        
+        # Run them all concurrently with a semaphore to limit concurrent requests
+        # This prevents overwhelming the Bluesky API
+        semaphore = asyncio.Semaphore(10)  # Max 10 concurrent requests
+        
+        async def hydrate_with_limit(post_uri: str):
+            async with semaphore:
+                return await _hydrate_post(post_uri)
+        
+        # Execute all hydration tasks concurrently
+        hydration_results = await asyncio.gather(
+            *[hydrate_with_limit(post['uri']) for post in ranked_posts],
+            return_exceptions=True
+        )
+        
+        # Filter and combine results
         hydrated_posts = []
-        for post in ranked_posts:
+        for post, hydrated_data in zip(ranked_posts, hydration_results):
             if len(hydrated_posts) >= limit:
                 break
             
-            # Hydrate the post (also checks visibility)
-            hydrated_data = await _hydrate_post(post['uri'])
-            if hydrated_data:
+            # Check if hydration was successful (not None and not an exception)
+            if hydrated_data and not isinstance(hydrated_data, Exception):
                 # Merge hydrated data with original post data
                 post.update(hydrated_data)
                 hydrated_posts.append(post)
             else:
-                logger.info(f"Filtered out non-public post: {post['uri']}")
+                if isinstance(hydrated_data, Exception):
+                    logger.debug(f"Exception hydrating post {post['uri']}: {hydrated_data}")
+                else:
+                    logger.info(f"Filtered out non-public post: {post['uri']}")
         
         # Get database stats
         stats = await db.get_stats()
