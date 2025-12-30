@@ -13,6 +13,8 @@ import asyncio
 import argparse
 import logging
 import sys
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
@@ -28,13 +30,22 @@ from src.ranking import RankingEngine, RankingConfig
 # Load environment variables
 load_dotenv()
 
-# Configure logging
+# Ensure logs directory exists
+Path('logs').mkdir(exist_ok=True)
+
+# Configure logging with rotation
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('feed_generator.log')
+        TimedRotatingFileHandler(
+            'logs/feed_generator.log',
+            when='midnight',
+            interval=1,
+            backupCount=7,  # Keep 7 days of logs
+            encoding='utf-8'
+        )
     ]
 )
 

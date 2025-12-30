@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Callable, Optional
 from datetime import datetime
 
@@ -55,6 +56,12 @@ class FirehoseListener:
         self._errors = 0
         self._processing_tasks = set()  # Track background tasks
         self._max_concurrent_tasks = 100  # Limit concurrent processing
+        
+        # Tracking for periodic logging
+        self._last_log_time = time.time()
+        self._last_log_posts = 0
+        self._last_log_whitelisted = 0
+        self._log_interval = 60*5  # Log every 5 minutes
 
     async def start(self):
         """
@@ -178,14 +185,8 @@ class FirehoseListener:
                     
                     self._posts_processed += 1
                     
-                    # Log progress every 100 posts with link statistics
-                    if self._posts_processed % 100 == 0:
-                        logger.info(
-                            f"Processed {self._posts_processed} posts | "
-                            f"Whitelisted: {self._posts_with_whitelisted_links} | "
-                            f"Reposts: {self._reposts_processed} (tracked: {self._reposts_tracked}) | "
-                            f"Errors: {self._errors}"
-                        )
+                    # Log periodic summary with rates instead of running totals
+                    self._log_summary()
                 
                 # Handle reposts (app.bsky.feed.repost)
                 elif op.path.startswith('app.bsky.feed.repost/'):
@@ -379,6 +380,33 @@ class FirehoseListener:
             return True
 
         return False
+    
+    def _log_summary(self):
+        """Log a summary of activity if enough time has passed."""
+        current_time = time.time()
+        elapsed = current_time - self._last_log_time
+        
+        if elapsed >= self._log_interval:
+            # Calculate rates
+            posts_since_last = self._posts_processed - self._last_log_posts
+            whitelisted_since_last = self._posts_with_whitelisted_links - self._last_log_whitelisted
+            posts_per_min = (posts_since_last / elapsed) * 60
+            whitelisted_per_min = (whitelisted_since_last / elapsed) * 60
+            
+            # Calculate acceptance rate
+            acceptance_rate = (whitelisted_since_last / posts_since_last * 100) if posts_since_last > 0 else 0
+            
+            logger.info(
+                f"Activity: {posts_per_min:.1f} posts/min | "
+                f"Accepted: {whitelisted_per_min:.1f}/min ({acceptance_rate:.1f}%) | "
+                f"Reposts tracked: {self._reposts_tracked} | "
+                f"Queue: {len(self._processing_tasks)} tasks"
+            )
+            
+            # Update tracking
+            self._last_log_time = current_time
+            self._last_log_posts = self._posts_processed
+            self._last_log_whitelisted = self._posts_with_whitelisted_links
 
     async def stop(self):
         """Stop the firehose listener gracefully."""

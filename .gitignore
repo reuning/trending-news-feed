@@ -29,5 +29,6 @@ htmlcov/
 
 # Logs
 *.log
+logs/
 
 plans/
