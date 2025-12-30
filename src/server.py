@@ -7,6 +7,7 @@ description, and skeleton generation.
 """
 
 import os
+import logging
 from typing import Optional
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -15,9 +16,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from atproto import Client, AtUri
 
 from src.database import Database
 from src.ranking import RankingEngine, RankingConfig
+
+logger = logging.getLogger(__name__)
 
 
 # Load environment variables
@@ -303,6 +307,54 @@ async def get_stats():
         )
 
 
+async def _hydrate_post(post_uri: str) -> Optional[dict]:
+    """
+    Fetch full post details from Bluesky API, including author information.
+    
+    This also serves as a visibility check - posts restricted to authenticated
+    users will fail to fetch, and we'll return None.
+    
+    Args:
+        post_uri: AT Protocol URI of the post
+        
+    Returns:
+        Dictionary with hydrated post data, or None if post is not publicly visible
+    """
+    try:
+        # Create an unauthenticated client with the public Bluesky API endpoint
+        client = Client(base_url='https://public.api.bsky.app')
+        
+        # Fetch the post without authentication
+        response = client.app.bsky.feed.get_posts({'uris': [post_uri]})
+        
+        # Check if we got the post back
+        if not response or not response.posts or len(response.posts) == 0:
+            logger.debug(f"Post {post_uri} not found or not accessible")
+            return None
+        
+        post = response.posts[0]
+        
+        # Extract author information
+        author = post.author
+        hydrated_data = {
+            'author_handle': author.handle,
+            'author_display_name': author.display_name or author.handle,
+            'author_avatar': author.avatar if hasattr(author, 'avatar') else None,
+            'post_text': post.record.text if hasattr(post.record, 'text') else '',
+            'like_count': post.like_count if hasattr(post, 'like_count') else 0,
+            'repost_count': post.repost_count if hasattr(post, 'repost_count') else 0,
+            'reply_count': post.reply_count if hasattr(post, 'reply_count') else 0,
+        }
+        
+        return hydrated_data
+        
+    except Exception as e:
+        # If we get an error (e.g., authentication required, not found),
+        # the post is not publicly visible
+        logger.debug(f"Failed to hydrate post {post_uri}: {e}")
+        return None
+
+
 @app.get("/preview", response_class=HTMLResponse)
 async def preview_feed(
     limit: int = Query(50, ge=1, le=100, description="Maximum number of posts to display")
@@ -312,6 +364,8 @@ async def preview_feed(
     
     This endpoint displays the ranked feed posts with their content,
     URLs, share counts, and timestamps in a nice web interface.
+    Posts are hydrated with author information from the Bluesky API,
+    and only publicly visible posts are displayed.
     
     Args:
         limit: Maximum number of posts to display (1-100)
@@ -328,8 +382,23 @@ async def preview_feed(
         )
     
     try:
-        # Get ranked posts
-        ranked_posts = await ranking_engine.rank_posts(limit=limit)
+        # Get ranked posts - fetch more than needed since some may be filtered out
+        ranked_posts = await ranking_engine.rank_posts(limit=limit * 2)
+        
+        # Hydrate posts and filter out non-public ones
+        hydrated_posts = []
+        for post in ranked_posts:
+            if len(hydrated_posts) >= limit:
+                break
+            
+            # Hydrate the post (also checks visibility)
+            hydrated_data = await _hydrate_post(post['uri'])
+            if hydrated_data:
+                # Merge hydrated data with original post data
+                post.update(hydrated_data)
+                hydrated_posts.append(post)
+            else:
+                logger.info(f"Filtered out non-public post: {post['uri']}")
         
         # Get database stats
         stats = await db.get_stats()
@@ -506,6 +575,11 @@ async def preview_feed(
             color: #92400e;
         }}
         
+        .badge-engagement {{
+            background: #f3e8ff;
+            color: #6b21a8;
+        }}
+        
         .empty-state {{
             background: white;
             border-radius: 12px;
@@ -566,7 +640,7 @@ async def preview_feed(
         </div>
 """
         
-        if not ranked_posts:
+        if not hydrated_posts:
             html_content += """
         <div class="empty-state">
             <h2>No posts yet</h2>
@@ -574,7 +648,7 @@ async def preview_feed(
         </div>
 """
         else:
-            for i, post in enumerate(ranked_posts, 1):
+            for i, post in enumerate(hydrated_posts, 1):
                 # Format timestamp
                 created_at = post['created_at']
                 if isinstance(created_at, str):
@@ -583,22 +657,33 @@ async def preview_feed(
                 
                 time_ago = _format_time_ago(created_at)
                 
-                # Truncate author DID for display
-                author_short = post['author_did'][:20] + '...' if len(post['author_did']) > 20 else post['author_did']
+                # Use hydrated author information
+                author_handle = post.get('author_handle', 'unknown')
+                author_display_name = post.get('author_display_name', author_handle)
+                author_avatar = post.get('author_avatar')
                 
-                # Get post text or use placeholder
-                post_text = post.get('text', '').strip()
+                # Get post text from hydrated data (more accurate) or fallback to stored text
+                post_text = post.get('post_text', post.get('text', '')).strip()
                 if not post_text:
                     post_text = '<em>No text content</em>'
                 
                 # Format score
                 score = post.get('score', 0)
                 
+                # Get engagement metrics
+                like_count = post.get('like_count', 0)
+                repost_count = post.get('repost_count', 0)
+                reply_count = post.get('reply_count', 0)
+                
+                # Build author display with avatar if available
+                author_html = f'<img src="{author_avatar}" alt="{author_display_name}" style="width: 20px; height: 20px; border-radius: 50%; vertical-align: middle; margin-right: 5px;">' if author_avatar else '👤 '
+                author_html += f'<strong>{author_display_name}</strong> @{author_handle}'
+                
                 html_content += f"""
         <div class="post">
             <div class="post-header">
                 <div class="post-meta">
-                    <div class="post-author">👤 {author_short}</div>
+                    <div class="post-author">{author_html}</div>
                     <div class="post-time">🕐 {time_ago}</div>
                 </div>
                 <div class="post-score">⭐ {score:.2f}</div>
@@ -615,6 +700,9 @@ async def preview_feed(
             <div class="post-footer">
                 <span class="badge badge-domain">📰 {post['domain']}</span>
                 <span class="badge badge-shares">🔄 {post['share_count']} share{'s' if post['share_count'] != 1 else ''}</span>
+                <span class="badge badge-engagement">❤️ {like_count}</span>
+                <span class="badge badge-engagement">🔁 {repost_count}</span>
+                <span class="badge badge-engagement">💬 {reply_count}</span>
             </div>
         </div>
 """
