@@ -1,8 +1,10 @@
+
+> [!WARNING] 
+> This was a mostly vibe coded project as I was curious how powerful it really is. I used [Roo Code](https://roocode.com/) in VS with Claude Sonnet 4.5 through [OpenRouter](https://openrouter.ai/). The project cost about $30 in total. 
+
 # Bluesky Domain-Based Feed Generator
 
 A custom Bluesky feed that displays posts containing links from trusted news domains, ranked by URL popularity, individual post engagement, and freshness.
-
-> **Note:** This project was built using AI-assisted development tools, demonstrating how AI can help create production-ready applications with comprehensive testing and documentation.
 
 ## What It Does
 
