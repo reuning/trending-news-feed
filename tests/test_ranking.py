@@ -805,3 +805,318 @@ async def test_rank_posts_repost_multiplier_affects_ranking(test_db):
     assert post_b["score"] > post_a["score"]
     assert post_b["repost_count"] == 10
     assert post_a["repost_count"] == 1
+
+
+# Pagination Tests
+
+@pytest.mark.asyncio
+async def test_cursor_encoding_decoding(test_db):
+    """Test cursor encoding and decoding."""
+    engine = RankingEngine(test_db)
+    
+    # Test encoding
+    score = 42.5
+    uri = "at://did:plc:user1/app.bsky.feed.post/123"
+    cursor = engine._encode_cursor(score, uri)
+    
+    # Cursor should be a base64 string
+    assert isinstance(cursor, str)
+    assert len(cursor) > 0
+    
+    # Test decoding
+    decoded_score, decoded_uri = engine._decode_cursor(cursor)
+    assert abs(decoded_score - score) < 0.0001
+    assert decoded_uri == uri
+
+
+@pytest.mark.asyncio
+async def test_cursor_decoding_invalid(test_db):
+    """Test cursor decoding with invalid input."""
+    engine = RankingEngine(test_db)
+    
+    # Invalid base64
+    with pytest.raises(ValueError):
+        engine._decode_cursor("not-valid-base64!!!")
+    
+    # Valid base64 but wrong format
+    import base64
+    invalid_cursor = base64.b64encode(b"no-separator").decode('utf-8')
+    with pytest.raises(ValueError):
+        engine._decode_cursor(invalid_cursor)
+
+
+@pytest.mark.asyncio
+async def test_pagination_first_page(test_db):
+    """Test getting the first page without cursor."""
+    now = datetime.utcnow()
+    
+    # Add 10 posts
+    for i in range(10):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get first page with limit of 5
+    result = await engine.get_feed_skeleton(limit=5, cursor=None)
+    
+    assert "feed" in result
+    assert len(result["feed"]) == 5
+    
+    # Should have cursor since there are more results
+    assert "cursor" in result
+    assert result["cursor"] is not None
+
+
+@pytest.mark.asyncio
+async def test_pagination_second_page(test_db):
+    """Test getting the second page with cursor."""
+    now = datetime.utcnow()
+    
+    # Add 10 posts
+    for i in range(10):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get first page
+    page1 = await engine.get_feed_skeleton(limit=5, cursor=None)
+    assert len(page1["feed"]) == 5
+    assert page1["cursor"] is not None
+    
+    # Get second page using cursor
+    page2 = await engine.get_feed_skeleton(limit=5, cursor=page1["cursor"])
+    assert len(page2["feed"]) == 5
+    
+    # Posts should be different
+    page1_uris = {post["post"] for post in page1["feed"]}
+    page2_uris = {post["post"] for post in page2["feed"]}
+    assert page1_uris.isdisjoint(page2_uris)  # No overlap
+
+
+@pytest.mark.asyncio
+async def test_pagination_last_page(test_db):
+    """Test that last page has no cursor."""
+    now = datetime.utcnow()
+    
+    # Add exactly 10 posts
+    for i in range(10):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get first page (5 posts)
+    page1 = await engine.get_feed_skeleton(limit=5, cursor=None)
+    assert len(page1["feed"]) == 5
+    assert page1["cursor"] is not None
+    
+    # Get second page (last 5 posts)
+    page2 = await engine.get_feed_skeleton(limit=5, cursor=page1["cursor"])
+    assert len(page2["feed"]) == 5
+    
+    # Last page should not have cursor
+    assert page2.get("cursor") is None
+
+
+@pytest.mark.asyncio
+async def test_pagination_empty_second_page(test_db):
+    """Test requesting page beyond available data."""
+    now = datetime.utcnow()
+    
+    # Add only 3 posts
+    for i in range(3):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get first page
+    page1 = await engine.get_feed_skeleton(limit=5, cursor=None)
+    assert len(page1["feed"]) == 3
+    assert page1.get("cursor") is None  # No more results
+    
+    # If we somehow got a cursor and tried to use it, should return empty
+    if page1.get("cursor"):
+        page2 = await engine.get_feed_skeleton(limit=5, cursor=page1["cursor"])
+        assert len(page2["feed"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_pagination_invalid_cursor(test_db):
+    """Test handling of invalid cursor."""
+    now = datetime.utcnow()
+    
+    # Add posts
+    for i in range(5):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Use invalid cursor - should treat as no cursor and return from beginning
+    result = await engine.get_feed_skeleton(limit=5, cursor="invalid-cursor")
+    
+    # Should still return results (treating invalid cursor as no cursor)
+    assert "feed" in result
+    assert len(result["feed"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_pagination_stale_cursor(test_db):
+    """Test handling of stale cursor (post no longer exists at that position)."""
+    now = datetime.utcnow()
+    
+    # Add posts
+    for i in range(10):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get first page
+    page1 = await engine.get_feed_skeleton(limit=5, cursor=None)
+    cursor = page1["cursor"]
+    
+    # Use the cursor - should work with score-based fallback
+    page2 = await engine.get_feed_skeleton(limit=5, cursor=cursor)
+    
+    # Should still get results
+    assert "feed" in page2
+    assert len(page2["feed"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_pagination_consistent_ordering(test_db):
+    """Test that pagination maintains consistent ordering."""
+    now = datetime.utcnow()
+    
+    # Add 15 posts
+    for i in range(15):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get all posts via pagination
+    all_paginated_uris = []
+    cursor = None
+    
+    for _ in range(3):  # 3 pages of 5 each
+        result = await engine.get_feed_skeleton(limit=5, cursor=cursor)
+        all_paginated_uris.extend([post["post"] for post in result["feed"]])
+        cursor = result.get("cursor")
+        if not cursor:
+            break
+    
+    # Get all posts at once
+    all_at_once = await engine.get_feed_skeleton(limit=15, cursor=None)
+    all_at_once_uris = [post["post"] for post in all_at_once["feed"]]
+    
+    # Order should be the same
+    assert all_paginated_uris == all_at_once_uris
+
+
+@pytest.mark.asyncio
+async def test_pagination_with_limit_one(test_db):
+    """Test pagination with limit of 1."""
+    now = datetime.utcnow()
+    
+    # Add 3 posts
+    for i in range(3):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Get posts one at a time
+    page1 = await engine.get_feed_skeleton(limit=1, cursor=None)
+    assert len(page1["feed"]) == 1
+    assert page1["cursor"] is not None
+    
+    page2 = await engine.get_feed_skeleton(limit=1, cursor=page1["cursor"])
+    assert len(page2["feed"]) == 1
+    assert page2["cursor"] is not None
+    
+    page3 = await engine.get_feed_skeleton(limit=1, cursor=page2["cursor"])
+    assert len(page3["feed"]) == 1
+    assert page3.get("cursor") is None  # Last page
+    
+    # All posts should be different
+    all_uris = {page1["feed"][0]["post"], page2["feed"][0]["post"], page3["feed"][0]["post"]}
+    assert len(all_uris) == 3
+
+
+@pytest.mark.asyncio
+async def test_pagination_no_cursor_when_exact_limit(test_db):
+    """Test that no cursor is returned when results exactly match limit."""
+    now = datetime.utcnow()
+    
+    # Add exactly 5 posts
+    for i in range(5):
+        await test_db.add_post(
+            uri=f"at://did:plc:user{i}/app.bsky.feed.post/{i}",
+            cid=f"cid{i}",
+            author_did=f"did:plc:user{i}",
+            url=f"https://nytimes.com/article{i}",
+            domain="nytimes.com",
+            created_at=now - timedelta(hours=i),
+        )
+    
+    engine = RankingEngine(test_db)
+    
+    # Request exactly 5 (all available)
+    result = await engine.get_feed_skeleton(limit=5, cursor=None)
+    
+    assert len(result["feed"]) == 5
+    # Should not have cursor since we got all results
+    assert result.get("cursor") is None

@@ -12,12 +12,13 @@ This ensures:
 - Very old posts decay even if popular
 """
 
+import base64
 import json
 import logging
 import math
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from .database import Database
 
@@ -198,6 +199,49 @@ class RankingEngine:
         age = now - created_at
         return age.total_seconds() / 3600  # Convert to hours
     
+    def _encode_cursor(self, score: float, uri: str) -> str:
+        """
+        Encode pagination cursor from score and URI.
+        
+        The cursor contains the score and URI of the last post in the current page,
+        allowing us to fetch posts that come after this position in the next page.
+        
+        Args:
+            score: Score of the last post
+            uri: URI of the last post
+        
+        Returns:
+            Base64-encoded cursor string
+        """
+        cursor_data = f"{score}::{uri}"
+        cursor_bytes = cursor_data.encode('utf-8')
+        return base64.b64encode(cursor_bytes).decode('utf-8')
+    
+    def _decode_cursor(self, cursor: str) -> Tuple[float, str]:
+        """
+        Decode pagination cursor to extract score and URI.
+        
+        Args:
+            cursor: Base64-encoded cursor string
+        
+        Returns:
+            Tuple of (score, uri)
+        
+        Raises:
+            ValueError: If cursor is invalid or malformed
+        """
+        try:
+            cursor_bytes = base64.b64decode(cursor.encode('utf-8'))
+            cursor_data = cursor_bytes.decode('utf-8')
+            parts = cursor_data.split('::', 1)
+            if len(parts) != 2:
+                raise ValueError("Invalid cursor format")
+            score = float(parts[0])
+            uri = parts[1]
+            return score, uri
+        except Exception as e:
+            raise ValueError(f"Failed to decode cursor: {e}")
+    
     async def rank_posts(
         self,
         limit: Optional[int] = None,
@@ -300,19 +344,20 @@ class RankingEngine:
         cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Get feed skeleton for AT Protocol feed endpoint.
+        Get feed skeleton for AT Protocol feed endpoint with cursor-based pagination.
         
         This is the main method called by the feed server to generate
-        the feed response. It returns post URIs in ranked order.
+        the feed response. It returns post URIs in ranked order, with support
+        for pagination using cursors.
         
         Args:
             limit: Maximum number of posts to return
-            cursor: Pagination cursor (not yet implemented)
+            cursor: Pagination cursor from previous page (optional)
         
         Returns:
             Dictionary with:
                 - feed: List of dicts with 'post' key containing URI
-                - cursor: Pagination cursor (optional)
+                - cursor: Pagination cursor for next page (optional)
         
         Example response:
             {
@@ -320,27 +365,74 @@ class RankingEngine:
                     {"post": "at://did:plc:abc/app.bsky.feed.post/123"},
                     {"post": "at://did:plc:def/app.bsky.feed.post/456"},
                 ],
-                "cursor": None
+                "cursor": "MS4xMjM0NTo6YXQ6Ly9kaWQ6cGxjOmRlZi9hcHAuYnNreS5mZWVkLnBvc3QvNDU2"
             }
         """
-        # Get ranked posts
-        ranked_posts = await self.rank_posts(limit=limit)
+        # Decode cursor if provided
+        cursor_score = None
+        cursor_uri = None
+        if cursor:
+            try:
+                cursor_score, cursor_uri = self._decode_cursor(cursor)
+                logger.debug(f"Decoded cursor: score={cursor_score}, uri={cursor_uri}")
+            except ValueError as e:
+                logger.warning(f"Invalid cursor provided: {e}")
+                # Treat invalid cursor as no cursor
+                cursor_score = None
+                cursor_uri = None
+        
+        # Get ranked posts - fetch more than limit to handle pagination filtering
+        # We need extra posts because some may be filtered out by cursor
+        fetch_limit = limit * 3 if cursor else limit + 1
+        ranked_posts = await self.rank_posts(limit=fetch_limit)
+        
+        # Filter posts based on cursor
+        filtered_posts = []
+        if cursor_score is not None and cursor_uri is not None:
+            # Skip posts until we find the cursor position
+            found_cursor = False
+            for post in ranked_posts:
+                if found_cursor:
+                    filtered_posts.append(post)
+                elif post["uri"] == cursor_uri and abs(post["score"] - cursor_score) < 0.0001:
+                    # Found the cursor position, start collecting from next post
+                    found_cursor = True
+            
+            # If we didn't find the cursor, it might be stale (posts re-ranked)
+            # In this case, use score-based filtering as fallback
+            if not found_cursor:
+                logger.debug("Cursor URI not found, using score-based filtering")
+                for post in ranked_posts:
+                    # Include posts with score less than cursor score
+                    # Or same score but lexicographically greater URI (for stable ordering)
+                    if post["score"] < cursor_score or \
+                       (abs(post["score"] - cursor_score) < 0.0001 and post["uri"] > cursor_uri):
+                        filtered_posts.append(post)
+        else:
+            # No cursor, return from beginning
+            filtered_posts = ranked_posts
+        
+        # Limit to requested number of posts
+        page_posts = filtered_posts[:limit]
         
         # Format for AT Protocol
-        feed = [{"post": post["uri"]} for post in ranked_posts]
+        feed = [{"post": post["uri"]} for post in page_posts]
         
-        # TODO: Implement cursor-based pagination
-        # For now, return None cursor
+        # Build response
         response = {
             "feed": feed,
         }
         
-        # Only include cursor if there might be more results
-        if len(feed) >= limit:
-            # In future, encode last post's score/timestamp as cursor
-            response["cursor"] = None
+        # Generate cursor for next page if there are more results
+        # Check if there are more posts available after this page
+        has_more = len(filtered_posts) > limit
+        if has_more and len(page_posts) > 0:
+            # Use the last post in this page to create cursor
+            last_post = page_posts[-1]
+            response["cursor"] = self._encode_cursor(last_post["score"], last_post["uri"])
+            logger.debug(f"Generated cursor for next page: score={last_post['score']}, uri={last_post['uri']}")
         
-        logger.info(f"Generated feed skeleton with {len(feed)} posts")
+        logger.info(f"Generated feed skeleton with {len(feed)} posts, has_more={has_more}")
         return response
     
     async def get_ranking_stats(self) -> Dict[str, Any]:

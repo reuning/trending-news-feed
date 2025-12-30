@@ -213,9 +213,7 @@ async def get_feed_skeleton(
         )
     
     try:
-        # Get feed skeleton from ranking engine
-        # Note: Cursor-based pagination not yet fully implemented in ranking engine
-        # For now, we ignore the cursor and return top results
+        # Get feed skeleton from ranking engine with cursor-based pagination
         feed_data = await ranking_engine.get_feed_skeleton(
             limit=limit,
             cursor=cursor
