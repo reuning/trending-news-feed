@@ -69,6 +69,12 @@ class FirehoseListener:
         self._max_active_tasks = 0
         self._task_semaphore = asyncio.Semaphore(500)  # Limit concurrent message processing
         
+        # Reconnection tracking
+        self._reconnect_attempts = 0
+        self._max_reconnect_delay = 300  # Max 5 minutes between reconnects
+        self._connection_start_time = None
+        self._total_reconnects = 0
+        
         # Batch processing configuration
         self._batch_size = batch_size
         self._flush_interval = flush_interval
@@ -86,47 +92,64 @@ class FirehoseListener:
 
     async def start(self):
         """
-        Start listening to the firehose.
+        Start listening to the firehose with automatic reconnection.
         
         This method establishes a connection and begins processing messages.
-        It will run indefinitely until stop() is called or an error occurs.
+        It will automatically reconnect on disconnections with exponential backoff.
+        It will run indefinitely until stop() is called.
         """
         self._running = True
         logger.info(f"Starting firehose listener on {self.firehose_url}")
         logger.info(f"Batch size: {self._batch_size}, Flush interval: {self._flush_interval}s")
 
+        # Start periodic flush task once
+        self._flush_task = asyncio.create_task(self._periodic_flush())
+        
         try:
-            # Start periodic flush task
-            self._flush_task = asyncio.create_task(self._periodic_flush())
-            
-            # Create async firehose client
-            self.client = AsyncFirehoseSubscribeReposClient()
-            
-            # Define the async message handler
-            async def on_message_handler(message):
-                if not self._running:
-                    return
-                
-                logger.debug(f"Received message from firehose")
-                
-                # Process message in background with semaphore to limit concurrency
-                # This prevents event loop saturation during traffic spikes
-                task = asyncio.create_task(self._process_message_with_limit(message))
-                self._active_tasks.add(task)
-                task.add_done_callback(self._active_tasks.discard)
-                
-                # Track max concurrent tasks for diagnostics
-                current_active = len(self._active_tasks)
-                if current_active > self._max_active_tasks:
-                    self._max_active_tasks = current_active
-            
-            # Start listening to the firehose with async callback
-            logger.info("Connecting to firehose...")
-            await self.client.start(on_message_handler)
+            # Keep reconnecting until explicitly stopped
+            while self._running:
+                try:
+                    await self._connect_and_listen()
+                    
+                    # If we get here, connection ended gracefully
+                    if self._running:
+                        logger.warning("Firehose connection ended unexpectedly, will reconnect...")
+                    else:
+                        logger.info("Firehose connection closed by stop() call")
+                        break
+                        
+                except Exception as e:
+                    if not self._running:
+                        logger.info("Firehose stopped during error handling")
+                        break
+                    
+                    # Check if this is a recoverable error
+                    error_str = str(e)
+                    is_consumer_too_slow = 'ConsumerTooSlow' in error_str
+                    is_network_error = any(err in error_str for err in [
+                        'ConnectionError', 'TimeoutError', 'ConnectionResetError',
+                        'ConnectionRefusedError', 'OSError'
+                    ])
+                    
+                    if is_consumer_too_slow or is_network_error:
+                        # Recoverable error - reconnect with backoff
+                        self._reconnect_attempts += 1
+                        self._total_reconnects += 1
+                        
+                        # Calculate exponential backoff: 2^n seconds, capped at max
+                        delay = min(2 ** self._reconnect_attempts, self._max_reconnect_delay)
+                        
+                        logger.warning(
+                            f"Recoverable error ({error_str}), reconnecting in {delay}s "
+                            f"(attempt {self._reconnect_attempts}, total reconnects: {self._total_reconnects})"
+                        )
+                        
+                        await asyncio.sleep(delay)
+                    else:
+                        # Non-recoverable error
+                        logger.error(f"Fatal error in firehose listener: {e}", exc_info=True)
+                        raise
 
-        except Exception as e:
-            logger.error(f"Fatal error in firehose listener: {e}", exc_info=True)
-            raise
         finally:
             self._running = False
             
@@ -144,8 +167,53 @@ class FirehoseListener:
             logger.info(
                 f"Firehose listener stopped. "
                 f"Processed: {self._posts_processed}, Errors: {self._errors}, "
-                f"Dropped: {self._dropped_messages}"
+                f"Dropped: {self._dropped_messages}, Total reconnects: {self._total_reconnects}"
             )
+    
+    async def _connect_and_listen(self):
+        """
+        Establish a single firehose connection and listen for messages.
+        
+        This method handles a single connection lifecycle. The parent start()
+        method will call this repeatedly to handle reconnections.
+        """
+        self._connection_start_time = time.time()
+        logger.info("Establishing firehose connection...")
+        
+        # Create async firehose client
+        self.client = AsyncFirehoseSubscribeReposClient()
+        
+        # Define the async message handler
+        async def on_message_handler(message):
+            if not self._running:
+                return
+            
+            logger.debug(f"Received message from firehose")
+            
+            # Process message in background with semaphore to limit concurrency
+            # This prevents event loop saturation during traffic spikes
+            task = asyncio.create_task(self._process_message_with_limit(message))
+            self._active_tasks.add(task)
+            task.add_done_callback(self._active_tasks.discard)
+            
+            # Track max concurrent tasks for diagnostics
+            current_active = len(self._active_tasks)
+            if current_active > self._max_active_tasks:
+                self._max_active_tasks = current_active
+        
+        # Start listening to the firehose with async callback
+        logger.info("Connected to firehose, listening for messages...")
+        
+        # Reset reconnect attempts on successful connection
+        self._reconnect_attempts = 0
+        
+        try:
+            await self.client.start(on_message_handler)
+        finally:
+            # Log connection duration
+            if self._connection_start_time:
+                duration = time.time() - self._connection_start_time
+                logger.info(f"Connection lasted {duration:.1f} seconds ({duration/3600:.2f} hours)")
 
     async def _process_message_with_limit(self, message):
         """
@@ -525,13 +593,18 @@ class FirehoseListener:
             # Calculate acceptance rate
             acceptance_rate = (whitelisted_since_last / posts_since_last * 100) if posts_since_last > 0 else 0
             
+            # Calculate connection uptime
+            uptime_seconds = time.time() - self._connection_start_time if self._connection_start_time else 0
+            uptime_hours = uptime_seconds / 3600
+            
             logger.info(
                 f"Activity: {posts_per_min:.1f} posts/min | "
                 f"Accepted: {whitelisted_per_min:.1f}/min ({acceptance_rate:.1f}%) | "
                 f"Batches flushed: {batches_since_last} ({flushed_since_last} posts) | "
                 f"Reposts tracked: {self._reposts_tracked} | "
                 f"Batch queue: {len(self._post_batch)} posts | "
-                f"Active tasks: {len(self._active_tasks)} (max: {self._max_active_tasks})"
+                f"Active tasks: {len(self._active_tasks)} (max: {self._max_active_tasks}) | "
+                f"Uptime: {uptime_hours:.2f}h | Reconnects: {self._total_reconnects}"
             )
             
             # Update tracking
@@ -569,6 +642,8 @@ class FirehoseListener:
     @property
     def stats(self) -> dict:
         """Get statistics about the listener."""
+        uptime_seconds = time.time() - self._connection_start_time if self._connection_start_time else 0
+        
         return {
             'posts_processed': self._posts_processed,
             'posts_with_links': self._posts_with_links,
@@ -581,6 +656,8 @@ class FirehoseListener:
             'is_running': self._running,
             'active_tasks': len(self._active_tasks),
             'max_active_tasks': self._max_active_tasks,
+            'total_reconnects': self._total_reconnects,
+            'current_uptime_hours': uptime_seconds / 3600,
         }
 
 
