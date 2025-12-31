@@ -382,7 +382,7 @@ async def preview_feed(
     
     try:
         # Get ranked posts - fetch more than needed since some may be filtered out
-        ranked_posts = await ranking_engine.rank_posts(limit=limit * 2)
+        ranked_posts = await ranking_engine.rank_posts(limit=limit * 1.5)
         
         # Hydrate posts concurrently for much better performance
         # Create all hydration tasks at once
@@ -390,7 +390,7 @@ async def preview_feed(
         
         # Run them all concurrently with a semaphore to limit concurrent requests
         # This prevents overwhelming the Bluesky API
-        semaphore = asyncio.Semaphore(10)  # Max 10 concurrent requests
+        semaphore = asyncio.Semaphore(20)  # Max 10 concurrent requests
         
         async def hydrate_with_limit(post_uri: str):
             async with semaphore:
