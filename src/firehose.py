@@ -170,7 +170,14 @@ class FirehoseListener:
         # Parse the commit data
         try:
             # Decode the CAR file containing the operations
-            car = CAR.from_bytes(commit.blocks)
+            # Use errors='replace' to handle invalid UTF-8 sequences gracefully
+            try:
+                car = CAR.from_bytes(commit.blocks)
+            except (UnicodeDecodeError, ValueError) as e:
+                # Skip commits with malformed CAR data
+                logger.debug(f"Skipping commit with invalid CAR data: {e}")
+                return
+            
             logger.debug(f"Processing commit with {len(commit.ops)} operations")
 
             # Process each operation in the commit
@@ -184,9 +191,14 @@ class FirehoseListener:
                     # Get the record from the CAR file
                     if op.cid is None:
                         continue
-                        
-                    record = car.blocks.get(op.cid)
-                    if record is None:
+                    
+                    try:
+                        record = car.blocks.get(op.cid)
+                        if record is None:
+                            continue
+                    except (UnicodeDecodeError, ValueError, KeyError) as e:
+                        # Skip records that can't be decoded
+                        logger.debug(f"Skipping post record with decode error: {e}")
                         continue
 
                     # Extract post information
@@ -213,9 +225,14 @@ class FirehoseListener:
                     # Get the record from the CAR file
                     if op.cid is None:
                         continue
-                        
-                    record = car.blocks.get(op.cid)
-                    if record is None:
+                    
+                    try:
+                        record = car.blocks.get(op.cid)
+                        if record is None:
+                            continue
+                    except (UnicodeDecodeError, ValueError, KeyError) as e:
+                        # Skip records that can't be decoded
+                        logger.debug(f"Skipping repost record with decode error: {e}")
                         continue
 
                     # Extract repost information
@@ -235,7 +252,8 @@ class FirehoseListener:
 
         except Exception as e:
             logger.error(f"Error parsing commit: {e}", exc_info=True)
-            raise
+            # Don't re-raise - continue processing other messages
+            self._errors += 1
 
     async def _handle_post(
         self,
