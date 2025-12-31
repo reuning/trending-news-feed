@@ -15,7 +15,7 @@ import logging
 import sys
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -126,12 +126,12 @@ class FeedGenerator:
         author_did: str,
         record: dict,
         timestamp: str,
-    ) -> bool:
+    ) -> Optional[Dict[str, Any]]:
         """
         Handle a post from the firehose.
         
         This callback is called by the firehose listener for each post with links.
-        It extracts URLs, filters by domain, and stores in the database.
+        It extracts URLs, filters by domain, and returns post data for batch processing.
         
         Args:
             uri: AT Protocol URI of the post
@@ -141,51 +141,46 @@ class FeedGenerator:
             timestamp: Timestamp of the post
             
         Returns:
-            True if post has whitelisted domain and was processed, False otherwise
+            Dictionary with post data if accepted, None otherwise
         """
         try:
             # Extract URL from post
             url = self.url_extractor.extract_url(record)
             if not url:
                 logger.debug(f"No URL found in post {uri}")
-                return False
+                return None
             
             # Extract domain
             domain = self.url_extractor.extract_domain(url)
             if not domain:
                 logger.debug(f"Could not extract domain from URL {url}")
-                return False
+                return None
             
             # Check if domain is whitelisted
             if not self.domain_filter.is_allowed(domain):
                 logger.debug(f"Domain {domain} not whitelisted, skipping post {uri}")
-                return False
+                return None
             
-            # Store post in database
+            # Prepare post data for batch processing
             text = record.get('text', '')
             created_at = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             
-            success = await self.db.add_post(
-                uri=uri,
-                cid=cid,
-                author_did=author_did,
-                url=url,
-                domain=domain,
-                text=text,
-                created_at=created_at,
-            )
+            logger.debug(f"Accepted post {uri} with URL {url} (domain: {domain})")
             
-            if success:
-                logger.info(f"Stored post {uri} with URL {url} (domain: {domain})")
-            else:
-                logger.debug(f"Post {uri} already exists in database")
-            
-            # Return True to indicate this post had a whitelisted domain
-            return True
+            # Return post data for batch insertion
+            return {
+                'uri': uri,
+                'cid': cid,
+                'author_did': author_did,
+                'url': url,
+                'domain': domain,
+                'text': text,
+                'created_at': created_at,
+            }
                 
         except Exception as e:
             logger.error(f"Error handling post {uri}: {e}", exc_info=True)
-            return False
+            return None
     
     async def _handle_repost(
         self,

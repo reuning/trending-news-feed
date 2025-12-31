@@ -3,8 +3,9 @@
 import asyncio
 import logging
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Any, List
 from datetime import datetime
+from collections import deque
 
 from atproto import (
     CAR,
@@ -32,6 +33,8 @@ class FirehoseListener:
         on_post_callback: Callable,
         on_repost_callback: Optional[Callable] = None,
         firehose_url: str = "wss://bsky.network",
+        batch_size: int = 100,
+        flush_interval: float = 5.0,
     ):
         """
         Initialize the Firehose Listener.
@@ -42,6 +45,8 @@ class FirehoseListener:
             on_repost_callback: Optional async function to call when a repost is received.
                                Should accept (repost_uri, original_post_uri, author_did, timestamp)
             firehose_url: WebSocket URL for the Bluesky firehose
+            batch_size: Number of posts to accumulate before flushing to database
+            flush_interval: Seconds between automatic flushes
         """
         self.on_post_callback = on_post_callback
         self.on_repost_callback = on_repost_callback
@@ -54,8 +59,15 @@ class FirehoseListener:
         self._reposts_processed = 0
         self._reposts_tracked = 0
         self._errors = 0
-        self._processing_tasks = set()  # Track background tasks
-        self._max_concurrent_tasks = 100  # Limit concurrent processing
+        self._dropped_messages = 0
+        self._max_concurrent_tasks = 1000  # Increased from 100 to handle more throughput
+        
+        # Batch processing configuration
+        self._batch_size = batch_size
+        self._flush_interval = flush_interval
+        self._post_batch: deque = deque(maxlen=10000)  # In-memory queue with max size
+        self._batch_lock = asyncio.Lock()
+        self._flush_task: Optional[asyncio.Task] = None
         
         # Tracking for periodic logging
         self._last_log_time = time.time()
@@ -72,8 +84,12 @@ class FirehoseListener:
         """
         self._running = True
         logger.info(f"Starting firehose listener on {self.firehose_url}")
+        logger.info(f"Batch size: {self._batch_size}, Flush interval: {self._flush_interval}s")
 
         try:
+            # Start periodic flush task
+            self._flush_task = asyncio.create_task(self._periodic_flush())
+            
             # Create async firehose client
             self.client = AsyncFirehoseSubscribeReposClient()
             
@@ -85,17 +101,8 @@ class FirehoseListener:
                 logger.debug(f"Received message from firehose")
                 
                 # Process message in background to avoid blocking the firehose
-                # This prevents ConsumerTooSlow errors
-                task = asyncio.create_task(self._process_message_wrapper(message))
-                self._processing_tasks.add(task)
-                task.add_done_callback(self._processing_tasks.discard)
-                
-                # If we have too many concurrent tasks, wait for some to complete
-                if len(self._processing_tasks) >= self._max_concurrent_tasks:
-                    logger.warning(f"Processing queue full ({len(self._processing_tasks)} tasks), waiting...")
-                    # Wait for at least half to complete before continuing
-                    while len(self._processing_tasks) >= self._max_concurrent_tasks // 2:
-                        await asyncio.sleep(0.1)
+                # Fire-and-forget approach - don't track tasks to reduce overhead
+                asyncio.create_task(self._process_message_wrapper(message))
             
             # Start listening to the firehose with async callback
             logger.info("Connecting to firehose...")
@@ -106,9 +113,22 @@ class FirehoseListener:
             raise
         finally:
             self._running = False
+            
+            # Cancel flush task
+            if self._flush_task:
+                self._flush_task.cancel()
+                try:
+                    await self._flush_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Flush any remaining posts
+            await self._flush_batch()
+            
             logger.info(
                 f"Firehose listener stopped. "
-                f"Processed: {self._posts_processed}, Errors: {self._errors}"
+                f"Processed: {self._posts_processed}, Errors: {self._errors}, "
+                f"Dropped: {self._dropped_messages}"
             )
 
     async def _process_message_wrapper(self, message):
@@ -226,7 +246,7 @@ class FirehoseListener:
         timestamp: str,
     ):
         """
-        Handle a single post by calling the callback.
+        Handle a single post by adding it to the batch queue.
         
         Args:
             uri: AT Protocol URI of the post
@@ -249,9 +269,9 @@ class FirehoseListener:
             # Track posts with links
             self._posts_with_links += 1
 
-            # Call the callback function (which will filter by whitelist)
-            # The callback should return True if the post was accepted (has whitelisted links)
-            result = await self.on_post_callback(
+            # Call the callback function (which will filter by whitelist and return post data)
+            # The callback should return post data dict if accepted, None otherwise
+            post_data = await self.on_post_callback(
                 uri=uri,
                 cid=cid,
                 author_did=author_did,
@@ -259,9 +279,17 @@ class FirehoseListener:
                 timestamp=timestamp,
             )
             
-            # Track posts with whitelisted links if callback indicates success
-            if result:
+            # If post was accepted (has whitelisted links), add to batch
+            if post_data:
                 self._posts_with_whitelisted_links += 1
+                
+                # Add to batch queue
+                async with self._batch_lock:
+                    self._post_batch.append(post_data)
+                    
+                    # If batch is full, flush it
+                    if len(self._post_batch) >= self._batch_size:
+                        await self._flush_batch()
 
         except Exception as e:
             logger.error(f"Error handling post {uri}: {e}", exc_info=True)
@@ -381,6 +409,56 @@ class FirehoseListener:
 
         return False
     
+    async def _periodic_flush(self):
+        """Periodically flush the batch queue to the database."""
+        logger.info(f"Starting periodic flush task (interval: {self._flush_interval}s)")
+        
+        while self._running:
+            try:
+                await asyncio.sleep(self._flush_interval)
+                await self._flush_batch()
+            except asyncio.CancelledError:
+                logger.info("Periodic flush task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in periodic flush: {e}", exc_info=True)
+    
+    async def _flush_batch(self):
+        """Flush the current batch of posts to the database."""
+        async with self._batch_lock:
+            if not self._post_batch:
+                return
+            
+            # Get all posts from the queue
+            batch = list(self._post_batch)
+            self._post_batch.clear()
+        
+        if not batch:
+            return
+        
+        try:
+            # Import here to avoid circular dependency
+            from src.database import Database
+            
+            # The callback should have set up the database reference
+            # We'll call it through the callback mechanism
+            logger.info(f"Flushing batch of {len(batch)} posts to database")
+            
+            # Call the batch callback if it exists
+            if hasattr(self.on_post_callback, '__self__'):
+                # Get the FeedGenerator instance
+                feed_gen = self.on_post_callback.__self__
+                if hasattr(feed_gen, 'db') and feed_gen.db:
+                    added = await feed_gen.db.add_posts_batch(batch)
+                    logger.info(f"Successfully flushed {added} posts to database")
+                else:
+                    logger.warning("Database not available for batch flush")
+            else:
+                logger.warning("Cannot flush batch - callback not bound to instance")
+                
+        except Exception as e:
+            logger.error(f"Error flushing batch: {e}", exc_info=True)
+    
     def _log_summary(self):
         """Log a summary of activity if enough time has passed."""
         current_time = time.time()
@@ -400,7 +478,7 @@ class FirehoseListener:
                 f"Activity: {posts_per_min:.1f} posts/min | "
                 f"Accepted: {whitelisted_per_min:.1f}/min ({acceptance_rate:.1f}%) | "
                 f"Reposts tracked: {self._reposts_tracked} | "
-                f"Queue: {len(self._processing_tasks)} tasks"
+                f"Batch queue: {len(self._post_batch)} posts"
             )
             
             # Update tracking
@@ -413,11 +491,17 @@ class FirehoseListener:
         logger.info("Stopping firehose listener...")
         self._running = False
         
-        # Wait for all background tasks to complete
-        if self._processing_tasks:
-            logger.info(f"Waiting for {len(self._processing_tasks)} background tasks to complete...")
-            await asyncio.gather(*self._processing_tasks, return_exceptions=True)
-            logger.info("All background tasks completed")
+        # Cancel flush task
+        if self._flush_task:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Flush any remaining posts
+        logger.info("Flushing remaining posts...")
+        await self._flush_batch()
         
         # Give it a moment to finish current message
         await asyncio.sleep(1)

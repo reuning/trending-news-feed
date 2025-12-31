@@ -135,11 +135,15 @@ class Database:
             echo=False,  # Set to True for SQL debugging
         )
         
-        # Enable foreign keys for each connection
+        # Enable foreign keys and optimize SQLite for each connection
         @event.listens_for(self.engine.sync_engine, "connect")
         def set_sqlite_pragma(dbapi_conn, connection_record):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for better concurrency
+            cursor.execute("PRAGMA synchronous=NORMAL")  # Faster than FULL, still safe
+            cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+            cursor.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
             cursor.close()
         
         # Create session factory
@@ -271,6 +275,81 @@ class Database:
         
         await session.flush()  # Ensure ID is generated
         return url_record
+    
+    async def add_posts_batch(
+        self,
+        posts: List[Dict[str, Any]],
+    ) -> int:
+        """
+        Add multiple posts in a single batch transaction.
+        
+        This is much more efficient than adding posts one at a time,
+        as it reduces database round-trips and transaction overhead.
+        
+        Args:
+            posts: List of post dictionaries, each containing:
+                - uri: AT Protocol URI of the post
+                - cid: Content ID of the post
+                - author_did: DID of the post author
+                - url: Normalized URL from the post
+                - domain: Domain extracted from URL
+                - text: Post text content (optional)
+                - created_at: Post creation timestamp
+        
+        Returns:
+            Number of posts successfully added (excludes duplicates)
+        """
+        if not posts:
+            return 0
+        
+        added_count = 0
+        
+        async with self.async_session() as session:
+            try:
+                # Process each post in the batch
+                for post_data in posts:
+                    try:
+                        # Check if URL exists, create or update
+                        url_record = await self._get_or_create_url(
+                            session,
+                            post_data['url'],
+                            post_data['domain']
+                        )
+                        
+                        # Create post record
+                        post = Post(
+                            uri=post_data['uri'],
+                            cid=post_data['cid'],
+                            author_did=post_data['author_did'],
+                            text=post_data.get('text'),
+                            created_at=post_data['created_at'],
+                        )
+                        session.add(post)
+                        
+                        # Create junction table entry
+                        post_url = PostURL(
+                            post_uri=post_data['uri'],
+                            url_id=url_record.id,
+                        )
+                        session.add(post_url)
+                        
+                        added_count += 1
+                        
+                    except IntegrityError:
+                        # Post already exists, skip it
+                        await session.rollback()
+                        logger.debug(f"Post {post_data['uri']} already exists, skipping")
+                        continue
+                
+                # Commit all posts in one transaction
+                await session.commit()
+                logger.debug(f"Batch added {added_count} posts out of {len(posts)}")
+                return added_count
+                
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Error in batch add: {e}", exc_info=True)
+                raise
     
     async def increment_repost_count(self, post_uri: str) -> bool:
         """
