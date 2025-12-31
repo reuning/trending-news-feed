@@ -61,6 +61,8 @@ class FirehoseListener:
         self._errors = 0
         self._dropped_messages = 0
         self._max_concurrent_tasks = 1000  # Increased from 100 to handle more throughput
+        self._batches_flushed = 0
+        self._posts_flushed = 0
         
         # Batch processing configuration
         self._batch_size = batch_size
@@ -73,6 +75,8 @@ class FirehoseListener:
         self._last_log_time = time.time()
         self._last_log_posts = 0
         self._last_log_whitelisted = 0
+        self._last_log_batches = 0
+        self._last_log_flushed = 0
         self._log_interval = 60*5  # Log every 5 minutes
 
     async def start(self):
@@ -460,7 +464,7 @@ class FirehoseListener:
             
             # The callback should have set up the database reference
             # We'll call it through the callback mechanism
-            logger.info(f"Flushing batch of {len(batch)} posts to database")
+            logger.debug(f"Flushing batch of {len(batch)} posts to database")
             
             # Call the batch callback if it exists
             if hasattr(self.on_post_callback, '__self__'):
@@ -468,7 +472,11 @@ class FirehoseListener:
                 feed_gen = self.on_post_callback.__self__
                 if hasattr(feed_gen, 'db') and feed_gen.db:
                     added = await feed_gen.db.add_posts_batch(batch)
-                    logger.info(f"Successfully flushed {added} posts to database")
+                    logger.debug(f"Successfully flushed {added} posts to database")
+                    
+                    # Track batch statistics
+                    self._batches_flushed += 1
+                    self._posts_flushed += added
                 else:
                     logger.warning("Database not available for batch flush")
             else:
@@ -486,6 +494,9 @@ class FirehoseListener:
             # Calculate rates
             posts_since_last = self._posts_processed - self._last_log_posts
             whitelisted_since_last = self._posts_with_whitelisted_links - self._last_log_whitelisted
+            batches_since_last = self._batches_flushed - self._last_log_batches
+            flushed_since_last = self._posts_flushed - self._last_log_flushed
+            
             posts_per_min = (posts_since_last / elapsed) * 60
             whitelisted_per_min = (whitelisted_since_last / elapsed) * 60
             
@@ -495,6 +506,7 @@ class FirehoseListener:
             logger.info(
                 f"Activity: {posts_per_min:.1f} posts/min | "
                 f"Accepted: {whitelisted_per_min:.1f}/min ({acceptance_rate:.1f}%) | "
+                f"Batches flushed: {batches_since_last} ({flushed_since_last} posts) | "
                 f"Reposts tracked: {self._reposts_tracked} | "
                 f"Batch queue: {len(self._post_batch)} posts"
             )
@@ -503,6 +515,8 @@ class FirehoseListener:
             self._last_log_time = current_time
             self._last_log_posts = self._posts_processed
             self._last_log_whitelisted = self._posts_with_whitelisted_links
+            self._last_log_batches = self._batches_flushed
+            self._last_log_flushed = self._posts_flushed
 
     async def stop(self):
         """Stop the firehose listener gracefully."""
@@ -538,6 +552,8 @@ class FirehoseListener:
             'posts_with_whitelisted_links': self._posts_with_whitelisted_links,
             'reposts_processed': self._reposts_processed,
             'reposts_tracked': self._reposts_tracked,
+            'batches_flushed': self._batches_flushed,
+            'posts_flushed': self._posts_flushed,
             'errors': self._errors,
             'is_running': self._running,
         }
