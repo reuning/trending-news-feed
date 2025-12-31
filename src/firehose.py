@@ -77,7 +77,7 @@ class FirehoseListener:
         self._last_log_whitelisted = 0
         self._last_log_batches = 0
         self._last_log_flushed = 0
-        self._log_interval = 60*5  # Log every 5 minutes
+        self._log_interval = 60  # Log every 1 minute
 
     async def start(self):
         """
