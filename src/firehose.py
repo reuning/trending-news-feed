@@ -64,6 +64,11 @@ class FirehoseListener:
         self._batches_flushed = 0
         self._posts_flushed = 0
         
+        # Task tracking for diagnostics
+        self._active_tasks = set()
+        self._max_active_tasks = 0
+        self._task_semaphore = asyncio.Semaphore(500)  # Limit concurrent message processing
+        
         # Batch processing configuration
         self._batch_size = batch_size
         self._flush_interval = flush_interval
@@ -104,9 +109,16 @@ class FirehoseListener:
                 
                 logger.debug(f"Received message from firehose")
                 
-                # Process message in background to avoid blocking the firehose
-                # Fire-and-forget approach - don't track tasks to reduce overhead
-                asyncio.create_task(self._process_message_wrapper(message))
+                # Process message in background with semaphore to limit concurrency
+                # This prevents event loop saturation during traffic spikes
+                task = asyncio.create_task(self._process_message_with_limit(message))
+                self._active_tasks.add(task)
+                task.add_done_callback(self._active_tasks.discard)
+                
+                # Track max concurrent tasks for diagnostics
+                current_active = len(self._active_tasks)
+                if current_active > self._max_active_tasks:
+                    self._max_active_tasks = current_active
             
             # Start listening to the firehose with async callback
             logger.info("Connecting to firehose...")
@@ -135,6 +147,16 @@ class FirehoseListener:
                 f"Dropped: {self._dropped_messages}"
             )
 
+    async def _process_message_with_limit(self, message):
+        """
+        Process message with semaphore to limit concurrent processing.
+        
+        Args:
+            message: Raw message from the firehose
+        """
+        async with self._task_semaphore:
+            await self._process_message_wrapper(message)
+    
     async def _process_message_wrapper(self, message):
         """
         Wrapper for processing messages that handles errors.
@@ -508,7 +530,8 @@ class FirehoseListener:
                 f"Accepted: {whitelisted_per_min:.1f}/min ({acceptance_rate:.1f}%) | "
                 f"Batches flushed: {batches_since_last} ({flushed_since_last} posts) | "
                 f"Reposts tracked: {self._reposts_tracked} | "
-                f"Batch queue: {len(self._post_batch)} posts"
+                f"Batch queue: {len(self._post_batch)} posts | "
+                f"Active tasks: {len(self._active_tasks)} (max: {self._max_active_tasks})"
             )
             
             # Update tracking
@@ -556,6 +579,8 @@ class FirehoseListener:
             'posts_flushed': self._posts_flushed,
             'errors': self._errors,
             'is_running': self._running,
+            'active_tasks': len(self._active_tasks),
+            'max_active_tasks': self._max_active_tasks,
         }
 
 
