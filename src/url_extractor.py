@@ -20,6 +20,7 @@ class URLExtractor:
         'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
         'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid',
         '_ga', '_gl', 'ref', 'source', 'campaign',
+        'link_source', 'taid', 'user_email',
     }
 
     def __init__(self, remove_tracking_params: bool = True):

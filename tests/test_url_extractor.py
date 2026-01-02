@@ -207,6 +207,33 @@ class TestURLExtractor:
         url = extractor.extract_url(record)
         assert url == 'https://bbc.com/news/world-us-canada-12345678'
 
+    def test_extract_url_real_world_apnews(self, extractor):
+        """Test with real-world AP News URL with link_source and taid params"""
+        record = {
+            'embed': {
+                '$type': 'app.bsky.embed.external',
+                'external': {
+                    'uri': 'https://apnews.com/article/tesla-sales-musk-trump-deliveries-robotaxi-6d60715babde97b3b1a8e2416f4065ca?link_source=ta_bluesky_link&taid=6957d4733265bb0001754d6b'
+                }
+            }
+        }
+        
+        url = extractor.extract_url(record)
+        # Should remove link_source and taid tracking parameters
+        assert url == 'https://apnews.com/article/tesla-sales-musk-trump-deliveries-robotaxi-6d60715babde97b3b1a8e2416f4065ca'
+        assert 'link_source' not in url
+        assert 'taid' not in url
+
+    def test_normalize_url_removes_link_source_and_taid(self, extractor):
+        """Test that link_source, taid, and user_email parameters are removed"""
+        url = extractor.normalize_url(
+            'https://example.com/article?link_source=bluesky&taid=abc123&user_email=test@example.com&id=456'
+        )
+        assert url == 'https://example.com/article?id=456'
+        assert 'link_source' not in url
+        assert 'taid' not in url
+        assert 'user_email' not in url
+
     def test_extract_url_empty_record(self, extractor):
         """Test with empty record"""
         url = extractor.extract_url({})
