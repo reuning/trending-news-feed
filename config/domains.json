@@ -4,7 +4,8 @@
     "washingtonpost.com",
     "bbc.com",
     "reuters.com",
-    "apnews.com"
+    "apnews.com",
+    "404media.co"
   ],
   "match_subdomains": true
 }
