@@ -49,9 +49,9 @@ def publish_feed():
         print(f"   Handle: {profile.handle}")
         
         # Feed configuration
-        feed_name = "domain-news"
-        display_name = "Domain News Feed"
-        description = "News posts from trusted sources, ranked by popularity and freshness"
+        feed_name = "trending-news"
+        display_name = "Trending News Stories"
+        description = "Feed tracks most shared news stories from a limited set of news domains. Displays the most popular posts sharing the most popular stories."
         
         print(f"\n📝 Creating feed generator record...")
         print(f"   Feed Name: {feed_name}")
