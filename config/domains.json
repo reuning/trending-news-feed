@@ -5,7 +5,18 @@
     "bbc.com",
     "reuters.com",
     "apnews.com",
-    "404media.co"
+    "wsj.com",
+    "npr.com",
+    "404media.co",
+    "hellgatenyc.com",
+    "afermath.site", 
+    "defector.com",
+    "assignedmedia.com",
+    "texasobserver.org",
+    "propublica.org",
+    "bellingcat.com",
+    "statesnewsroom.com",
+    "thehandbasket.co"
   ],
   "match_subdomains": true
 }
