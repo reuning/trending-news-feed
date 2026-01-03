@@ -33,10 +33,13 @@ FEED_HOSTNAME = os.getenv("FEED_HOSTNAME", "http://localhost:8000")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "./data/feed.db")
 BSKY_HANDLE = os.getenv("BSKY_HANDLE", "")
 
-# Extract DID from hostname for feed URI
-# Using did:web method - DID is derived from the FEED_HOSTNAME
-FEED_DID = f"did:web:{FEED_HOSTNAME.replace('http://', '').replace('https://', '').split(':')[0]}"
-FEED_URI = f"at://{FEED_DID}/app.bsky.feed.generator/trending-news"
+# For feed generators, we use did:web for the service DID
+SERVICE_DID = f"did:web:{FEED_HOSTNAME.replace('http://', '').replace('https://', '').split(':')[0]}"
+
+# The feed URI will be determined by where the feed record is published
+# (typically at://<user-did>/app.bsky.feed.generator/<feed-name>)
+# We'll accept any feed URI with the correct feed name
+FEED_NAME = "trending-news"
 
 
 # Pydantic models for request/response validation
@@ -119,7 +122,8 @@ async def root():
     return {
         "name": "Bluesky Domain Feed Generator",
         "description": "A custom feed displaying posts from whitelisted news domains",
-        "feed_uri": FEED_URI,
+        "service_did": SERVICE_DID,
+        "feed_name": FEED_NAME,
         "version": "1.0.0"
     }
 
@@ -134,7 +138,7 @@ async def did_document():
     """
     doc = {
         "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": FEED_DID,
+        "id": SERVICE_DID,
         "service": [
             {
                 "id": "#bsky_fg",
@@ -157,18 +161,9 @@ async def describe_feed_generator():
     Returns:
         FeedGeneratorDescription: Feed generator metadata
     """
-    # In a real implementation, the CID would be the content hash
-    # For now, we use a placeholder
-    feed_cid = "bafyreihqhqklffqkwtpn6wtjzz7d5lqzx7obed4qkbvvzqyqkqkqkqkqkq"
-    
     response = {
-        "did": FEED_DID,
-        "feeds": [
-            {
-                "uri": FEED_URI,
-                "cid": feed_cid
-            }
-        ]
+        "did": SERVICE_DID,
+        "feeds": []
     }
     
     return JSONResponse(content=response)
@@ -199,11 +194,12 @@ async def get_feed_skeleton(
     """
     global ranking_engine
     
-    # Validate feed URI
-    if feed != FEED_URI:
+    # Validate feed URI - check that it ends with our feed name
+    # The feed URI format is: at://<user-did>/app.bsky.feed.generator/<feed-name>
+    if not feed.endswith(f"/app.bsky.feed.generator/{FEED_NAME}"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown feed: {feed}. Expected: {FEED_URI}"
+            detail=f"Unknown feed: {feed}. This server only serves feeds named '{FEED_NAME}'"
         )
     
     if not ranking_engine:
@@ -222,6 +218,7 @@ async def get_feed_skeleton(
         return JSONResponse(content=feed_data)
         
     except Exception as e:
+        logger.error(f"Error generating feed for {feed}: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generating feed: {str(e)}"
@@ -296,7 +293,8 @@ async def get_stats():
         return {
             "database": db_stats,
             "ranking": ranking_stats,
-            "feed_uri": FEED_URI
+            "service_did": SERVICE_DID,
+            "feed_name": FEED_NAME
         }
         
     except Exception as e:
