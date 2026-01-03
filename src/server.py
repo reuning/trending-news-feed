@@ -311,7 +311,8 @@ async def _hydrate_post(post_uri: str) -> Optional[dict]:
     Fetch full post details from Bluesky API, including author information.
     
     This also serves as a visibility check - posts restricted to authenticated
-    users will fail to fetch, and we'll return None.
+    users will fail to fetch, and we'll return None. Additionally, posts with
+    the !no-unauthenticated label are filtered out.
     
     Args:
         post_uri: AT Protocol URI of the post
@@ -332,6 +333,16 @@ async def _hydrate_post(post_uri: str) -> Optional[dict]:
             return None
         
         post = response.posts[0]
+        
+        # Check for !no-unauthenticated label
+        # Posts with this label should not be shown to unauthenticated users
+        if hasattr(post, 'labels') and post.labels:
+            for label in post.labels:
+                # Check if label has a 'val' attribute (label value)
+                label_val = label.val if hasattr(label, 'val') else str(label)
+                if label_val == '!no-unauthenticated':
+                    logger.debug(f"Post {post_uri} has !no-unauthenticated label, filtering out")
+                    return None
         
         # Extract author information
         author = post.author
