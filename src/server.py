@@ -96,7 +96,8 @@ async def lifespan(app: FastAPI):
     ranking_engine = RankingEngine(db, config)
     
     print(f"Feed server started: {FEED_HOSTNAME}")
-    print(f"Feed URI: {FEED_URI}")
+    print(f"Service DID: {SERVICE_DID}")
+    print(f"Feed name: {FEED_NAME}")
     print(f"Database: {DATABASE_PATH}")
     
     yield  # Application runs here
