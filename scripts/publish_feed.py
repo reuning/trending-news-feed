@@ -69,15 +69,29 @@ def publish_feed():
             "createdAt": client.get_current_time_iso(),
         }
         
+        print(f"\n🔍 DEBUG: Feed generator record:")
+        print(f"   Record: {record}")
+        print(f"   Repo: {profile.did}")
+        print(f"   Collection: app.bsky.feed.generator")
+        print(f"   RKey: {feed_name}")
+        
         # Put the record in the user's repository
-        response = client.com.atproto.repo.put_record(
-            {
-                "repo": profile.did,
-                "collection": "app.bsky.feed.generator",
-                "rkey": feed_name,
-                "record": record,
-            }
-        )
+        try:
+            response = client.com.atproto.repo.put_record(
+                {
+                    "repo": profile.did,
+                    "collection": "app.bsky.feed.generator",
+                    "rkey": feed_name,
+                    "record": record,
+                }
+            )
+        except Exception as put_error:
+            print(f"\n❌ Error details from put_record:")
+            print(f"   Error type: {type(put_error).__name__}")
+            print(f"   Error message: {str(put_error)}")
+            if hasattr(put_error, 'response'):
+                print(f"   Response: {put_error.response}")
+            raise
         
         # Construct the feed URI
         feed_uri = f"at://{profile.did}/app.bsky.feed.generator/{feed_name}"
