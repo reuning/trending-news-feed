@@ -31,7 +31,7 @@ class RankingConfig:
     def __init__(
         self,
         decay_rate: float = 0.05,
-        max_age_hours: int = 168,
+        max_age_hours: int = 72,
         min_share_count: int = 1,
         min_repost_count: int = 0,
         repost_weight: float = 1.0,
@@ -45,7 +45,7 @@ class RankingConfig:
             decay_rate: Exponential decay rate (lambda). Higher = faster decay.
                        Default 0.05 means ~60% score after 10 hours.
             max_age_hours: Maximum age of posts to include (in hours).
-                          Default 168 = 1 week.
+                          Default 72 = 3 days.
             min_share_count: Minimum share count to include in results.
                             Default 1 = include all posts.
             min_repost_count: Minimum repost count to include in results.
@@ -93,7 +93,7 @@ class RankingConfig:
         logger.info(f"Loaded ranking config from {config_path}")
         return cls(
             decay_rate=config_data.get("decay_rate", 0.05),
-            max_age_hours=config_data.get("max_age_hours", 168),
+            max_age_hours=config_data.get("max_age_hours", 72),
             min_share_count=config_data.get("min_share_count", 1),
             min_repost_count=config_data.get("min_repost_count", 0),
             repost_weight=config_data.get("repost_weight", 1.0),
@@ -295,7 +295,7 @@ class RankingEngine:
         else:
             posts = await self.database.get_recent_posts(
                 hours=self.config.max_age_hours,
-                limit=1000,  # Get more than needed for filtering
+                limit=5000,  # Get more than needed for filtering
             )
         
         logger.debug(f"Retrieved {len(posts)} posts for ranking")
