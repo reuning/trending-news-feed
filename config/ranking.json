@@ -3,7 +3,7 @@
   "max_age_hours": 72,
   "min_share_count": 1,
   "min_repost_count": 0,
-  "repost_weight": 1.0,
+  "repost_weight": 0.5,
   "results_limit": 50,
   "max_posts_per_url": 2
 }
