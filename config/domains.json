@@ -16,7 +16,8 @@
     "propublica.org",
     "bellingcat.com",
     "statesnewsroom.com",
-    "thehandbasket.co"
+    "thehandbasket.co",
+    "zeteo.com"
   ],
   "match_subdomains": true
 }
