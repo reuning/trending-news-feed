@@ -589,10 +589,14 @@ async def test_rank_posts_with_same_scores(test_db):
     engine = RankingEngine(test_db)
     ranked = await engine.rank_posts()
     
-    # All should have same score
-    assert len(ranked) == 3
+    # With max_posts_per_url=2 (from config), only 2 posts should be returned
+    # even though 3 were added with the same URL
+    assert len(ranked) == 2
     scores = [p["score"] for p in ranked]
+    # The 2 returned posts should have same score
     assert all(abs(s - scores[0]) < 0.01 for s in scores)
+    # All should be from the same URL
+    assert all(p["url"] == "https://nytimes.com/same" for p in ranked)
 
 
 @pytest.mark.asyncio

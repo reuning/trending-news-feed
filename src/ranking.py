@@ -36,6 +36,7 @@ class RankingConfig:
         min_repost_count: int = 0,
         repost_weight: float = 1.0,
         results_limit: int = 50,
+        max_posts_per_url: Optional[int] = None,
     ):
         """
         Initialize ranking configuration.
@@ -54,6 +55,9 @@ class RankingConfig:
                           Higher values increase repost importance.
             results_limit: Maximum number of posts to return.
                           Default 50.
+            max_posts_per_url: Maximum number of posts per URL to include.
+                              Default None = unlimited.
+                              Set to 2 to limit each URL to top 2 posts.
         """
         self.decay_rate = decay_rate
         self.max_age_hours = max_age_hours
@@ -61,6 +65,7 @@ class RankingConfig:
         self.min_repost_count = min_repost_count
         self.repost_weight = repost_weight
         self.results_limit = results_limit
+        self.max_posts_per_url = max_posts_per_url
     
     @classmethod
     def from_file(cls, config_path: str = "config/ranking.json") -> "RankingConfig":
@@ -93,6 +98,7 @@ class RankingConfig:
             min_repost_count=config_data.get("min_repost_count", 0),
             repost_weight=config_data.get("repost_weight", 1.0),
             results_limit=config_data.get("results_limit", 50),
+            max_posts_per_url=config_data.get("max_posts_per_url", 2),
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -104,6 +110,7 @@ class RankingConfig:
             "min_repost_count": self.min_repost_count,
             "repost_weight": self.repost_weight,
             "results_limit": self.results_limit,
+            "max_posts_per_url": self.max_posts_per_url,
         }
 
 
@@ -328,6 +335,25 @@ class RankingEngine:
         
         # Sort by score (highest first)
         scored_posts.sort(key=lambda p: p["score"], reverse=True)
+        
+        # Limit posts per URL if configured
+        if self.config.max_posts_per_url is not None:
+            url_counts = {}
+            deduplicated_posts = []
+            
+            for post in scored_posts:
+                url = post.get("url", "")
+                current_count = url_counts.get(url, 0)
+                
+                if current_count < self.config.max_posts_per_url:
+                    deduplicated_posts.append(post)
+                    url_counts[url] = current_count + 1
+            
+            scored_posts = deduplicated_posts
+            logger.debug(
+                f"Limited to {self.config.max_posts_per_url} posts per URL, "
+                f"reduced from {len(scored_posts)} to {len(deduplicated_posts)} posts"
+            )
         
         # Limit results
         ranked_posts = scored_posts[:limit]

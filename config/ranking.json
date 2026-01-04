@@ -4,5 +4,6 @@
   "min_share_count": 1,
   "min_repost_count": 0,
   "repost_weight": 1.0,
-  "results_limit": 50
+  "results_limit": 50,
+  "max_posts_per_url": 2
 }
