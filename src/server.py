@@ -597,6 +597,8 @@ async def about_page():
     Returns:
         HTML page with feed information and alphabetized domain list
     """
+    global ranking_engine
+    
     # Load domains from config file
     try:
         with open("config/domains.json", "r") as f:
@@ -605,6 +607,20 @@ async def about_page():
     except Exception as e:
         logger.error(f"Error loading domains: {e}")
         domains = []
+    
+    # Get ranking config values
+    if ranking_engine:
+        ranking_config = ranking_engine.config
+        decay_rate = ranking_config.decay_rate
+        repost_weight = ranking_config.repost_weight
+        max_age_hours = ranking_config.max_age_hours
+        max_posts_per_url = ranking_config.max_posts_per_url
+    else:
+        # Fallback to defaults if engine not initialized
+        decay_rate = 0.05
+        repost_weight = 1.0
+        max_age_hours = 72
+        max_posts_per_url = None
     
     # Build domain list HTML
     domain_list_html = ""
@@ -633,16 +649,16 @@ async def about_page():
                 <p><strong>How it works:</strong> The feed monitors the Bluesky firehose for posts containing links
                 to the whitelisted domains listed below. Posts are ranked by a score calculated from the number of times
                 the URL has been shared, with a time decay factor that reduces the score of older posts. Posts older than
-                72 hours are excluded. The feed shows up to 2 posts per unique URL.</p>
+                {max_age_hours} hours are excluded.{f' The feed shows up to {max_posts_per_url} posts per unique URL.' if max_posts_per_url else ''}</p>
             </div>
             
             <h2>Features</h2>
             <ul class="feature-list">
                 <li>Filters posts to only include links from whitelisted domains</li>
-                <li>Ranks posts by share count with time decay (decay rate: 0.6)</li>
+                <li>Ranks posts by share count with time decay (decay rate: {decay_rate})</li>
                 <li>Monitors the Bluesky firehose in real-time</li>
-                <li>Tracks URL shares and reposts (repost weight: 0.5)</li>
-                <li>Excludes posts older than 72 hours</li>
+                <li>Tracks URL shares and reposts (repost weight: {repost_weight})</li>
+                <li>Excludes posts older than {max_age_hours} hours</li>
                 <li>Shows only publicly visible posts</li>
             </ul>
             

@@ -40,7 +40,7 @@ from src.database import Database
 from src.ranking import RankingEngine, RankingConfig
 
 
-def format_post_info(post: Dict[str, Any], detailed: bool = False) -> str:
+def format_post_info(post: Dict[str, Any], detailed: bool = False, config: Optional[RankingConfig] = None) -> str:
     """Format post information for display."""
     lines = []
     lines.append(f"\n{'='*80}")
@@ -68,14 +68,21 @@ def format_post_info(post: Dict[str, Any], detailed: bool = False) -> str:
         share_count = post['share_count']
         repost_count = post.get('repost_count', 0)
         
-        # These should match the ranking engine defaults
-        decay_rate = 0.05
-        repost_weight = 1.0
+        # Use config values if provided, otherwise use defaults
+        if config:
+            decay_rate = config.decay_rate
+            repost_weight = config.repost_weight
+        else:
+            # Fallback to defaults (should match RankingConfig defaults)
+            decay_rate = 0.05
+            repost_weight = 1.0
         
         decay_factor = math.exp(-decay_rate * age_hours)
         effective_repost = max(1, repost_count)
         weighted_repost = math.pow(effective_repost, repost_weight)
         
+        lines.append(f"  Decay rate: {decay_rate}")
+        lines.append(f"  Repost weight: {repost_weight}")
         lines.append(f"  Decay factor: exp(-{decay_rate} * {age_hours:.2f}) = {decay_factor:.4f}")
         lines.append(f"  Effective repost: max(1, {repost_count}) = {effective_repost}")
         lines.append(f"  Weighted repost: {effective_repost}^{repost_weight} = {weighted_repost:.4f}")
@@ -160,7 +167,7 @@ async def check_top_posts(engine: RankingEngine, limit: int = 10, detailed: bool
     print(f"\nFound {len(posts)} posts")
     for i, post in enumerate(posts, 1):
         print(f"\n--- Rank #{i} ---")
-        print(format_post_info(post, detailed))
+        print(format_post_info(post, detailed, engine.config))
 
 
 async def check_post_by_uri(db: Database, engine: RankingEngine, uri: str, detailed: bool = False):
@@ -186,7 +193,7 @@ async def check_post_by_uri(db: Database, engine: RankingEngine, uri: str, detai
         print(f"Post data: {post_data}")
         return None
     
-    print(format_post_info(scored_post, detailed))
+    print(format_post_info(scored_post, detailed, engine.config))
     return scored_post
 
 
@@ -205,7 +212,7 @@ async def check_domain_posts(engine: RankingEngine, domain: str, limit: int = 10
     print(f"\nFound {len(domain_posts)} posts from {domain}")
     for i, post in enumerate(domain_posts[:limit], 1):
         print(f"\n--- Rank #{i} (Score: {post['score']:.4f}) ---")
-        print(format_post_info(post, detailed))
+        print(format_post_info(post, detailed, engine.config))
 
 
 async def compare_two_posts(db: Database, engine: RankingEngine, uri1: str, uri2: str):
