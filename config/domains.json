@@ -17,7 +17,8 @@
     "bellingcat.com",
     "statesnewsroom.com",
     "thehandbasket.co",
-    "zeteo.com"
+    "zeteo.com",
+    "theguardian.com"
   ],
   "match_subdomains": true
 }
