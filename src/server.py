@@ -9,12 +9,14 @@ description, and skeleton generation.
 import os
 import logging
 import asyncio
+import json
 from typing import Optional
 from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from atproto import Client, AtUri
@@ -115,6 +117,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/")
@@ -437,214 +442,12 @@ async def preview_feed(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bluesky Domain Feed Preview</title>
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }}
-        
-        .container {{
-            max-width: 800px;
-            margin: 0 auto;
-        }}
-        
-        .header {{
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }}
-        
-        .header h1 {{
-            color: #1d4ed8;
-            margin-bottom: 10px;
-            font-size: 2em;
-        }}
-        
-        .header p {{
-            color: #6b7280;
-            font-size: 1.1em;
-        }}
-        
-        .stats {{
-            display: flex;
-            gap: 20px;
-            margin-top: 20px;
-            flex-wrap: wrap;
-        }}
-        
-        .stat {{
-            background: #f3f4f6;
-            padding: 15px 20px;
-            border-radius: 8px;
-            flex: 1;
-            min-width: 150px;
-        }}
-        
-        .stat-label {{
-            color: #6b7280;
-            font-size: 0.9em;
-            margin-bottom: 5px;
-        }}
-        
-        .stat-value {{
-            color: #1f2937;
-            font-size: 1.8em;
-            font-weight: bold;
-        }}
-        
-        .post {{
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }}
-        
-        .post:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-        }}
-        
-        .post-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: start;
-            margin-bottom: 15px;
-            gap: 15px;
-        }}
-        
-        .post-meta {{
-            flex: 1;
-        }}
-        
-        .post-author {{
-            color: #6b7280;
-            font-size: 0.9em;
-            margin-bottom: 5px;
-        }}
-        
-        .post-time {{
-            color: #9ca3af;
-            font-size: 0.85em;
-        }}
-        
-        .post-score {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 0.9em;
-            white-space: nowrap;
-        }}
-        
-        .post-text {{
-            color: #1f2937;
-            line-height: 1.6;
-            margin-bottom: 15px;
-            font-size: 1.05em;
-        }}
-        
-        .post-url {{
-            background: #f3f4f6;
-            padding: 12px 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }}
-        
-        .post-url a {{
-            color: #1d4ed8;
-            text-decoration: none;
-            word-break: break-all;
-            font-size: 0.95em;
-        }}
-        
-        .post-url a:hover {{
-            text-decoration: underline;
-        }}
-        
-        .post-footer {{
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            margin-top: 12px;
-        }}
-        
-        .badge {{
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 12px;
-            border-radius: 15px;
-            font-size: 0.85em;
-            font-weight: 500;
-        }}
-        
-        .badge-domain {{
-            background: #dbeafe;
-            color: #1e40af;
-        }}
-        
-        .badge-shares {{
-            background: #fef3c7;
-            color: #92400e;
-        }}
-        
-        .badge-engagement {{
-            background: #f3e8ff;
-            color: #6b21a8;
-        }}
-        
-        .empty-state {{
-            background: white;
-            border-radius: 12px;
-            padding: 60px 30px;
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }}
-        
-        .empty-state h2 {{
-            color: #6b7280;
-            margin-bottom: 10px;
-        }}
-        
-        .empty-state p {{
-            color: #9ca3af;
-        }}
-        
-        .refresh-btn {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 1em;
-            font-weight: 600;
-            cursor: pointer;
-            margin-top: 20px;
-            transition: opacity 0.2s;
-        }}
-        
-        .refresh-btn:hover {{
-            opacity: 0.9;
-        }}
-    </style>
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>📰 Bluesky Domain Feed</h1>
+            <h1>Bluesky Domain Feed</h1>
             <p>News posts from trusted sources, ranked by popularity and freshness</p>
             
             <div class="stats">
@@ -662,7 +465,7 @@ async def preview_feed(
                 </div>
             </div>
             
-            <button class="refresh-btn" onclick="location.reload()">🔄 Refresh Feed</button>
+            <button class="refresh-btn" onclick="location.reload()">Refresh Feed</button>
         </div>
 """
         
@@ -702,7 +505,7 @@ async def preview_feed(
                 reply_count = post.get('reply_count', 0)
                 
                 # Build author display with avatar if available
-                author_html = f'<img src="{author_avatar}" alt="{author_display_name}" style="width: 20px; height: 20px; border-radius: 50%; vertical-align: middle; margin-right: 5px;">' if author_avatar else '👤 '
+                author_html = f'<img src="{author_avatar}" alt="{author_display_name}" style="width: 20px; height: 20px; border-radius: 50%; vertical-align: middle; margin-right: 5px;">' if author_avatar else ''
                 author_html += f'<strong>{author_display_name}</strong> @{author_handle}'
                 
                 html_content += f"""
@@ -710,25 +513,25 @@ async def preview_feed(
             <div class="post-header">
                 <div class="post-meta">
                     <div class="post-author">{author_html}</div>
-                    <div class="post-time">🕐 {time_ago}</div>
+                    <div class="post-time">{time_ago}</div>
                 </div>
-                <div class="post-score">⭐ {score:.2f}</div>
+                <div class="post-score">{score:.2f}</div>
             </div>
             
             <div class="post-text">{post_text}</div>
             
             <div class="post-url">
                 <a href="{post['url']}" target="_blank" rel="noopener noreferrer">
-                    🔗 {post['url']}
+                    {post['url']}
                 </a>
             </div>
             
             <div class="post-footer">
-                <span class="badge badge-domain">📰 {post['domain']}</span>
-                <span class="badge badge-shares">🔄 {post['share_count']} share{'s' if post['share_count'] != 1 else ''}</span>
-                <span class="badge badge-engagement">❤️ {like_count}</span>
-                <span class="badge badge-engagement">🔁 {repost_count}</span>
-                <span class="badge badge-engagement">💬 {reply_count}</span>
+                <span class="badge badge-domain">{post['domain']}</span>
+                <span class="badge badge-shares">{post['share_count']} share{'s' if post['share_count'] != 1 else ''}</span>
+                <span class="badge badge-engagement">{like_count} likes</span>
+                <span class="badge badge-engagement">{repost_count} reposts</span>
+                <span class="badge badge-engagement">{reply_count} replies</span>
             </div>
         </div>
 """
@@ -784,6 +587,91 @@ def _format_time_ago(dt: datetime) -> str:
     else:
         days = int(seconds / 86400)
         return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+@app.get("/about", response_class=HTMLResponse)
+async def about_page():
+    """
+    About page explaining the feed and listing whitelisted domains.
+    
+    Returns:
+        HTML page with feed information and alphabetized domain list
+    """
+    # Load domains from config file
+    try:
+        with open("config/domains.json", "r") as f:
+            config = json.load(f)
+            domains = sorted(config.get("domains", []))
+    except Exception as e:
+        logger.error(f"Error loading domains: {e}")
+        domains = []
+    
+    # Build domain list HTML
+    domain_list_html = ""
+    for domain in domains:
+        domain_list_html += f'                <li class="domain-item">{domain}</li>\n'
+    
+    html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About - Bluesky Domain Feed</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="content">
+            <h1>About This Feed</h1>
+            
+            <p>
+                Welcome to the <strong>Bluesky Domain Feed</strong> – a curated news feed that surfaces
+                the most shared and discussed articles from trusted news sources on Bluesky.
+            </p>
+            
+            <div class="highlight">
+                <p><strong>How it works:</strong> This feed monitors Bluesky for posts containing links
+                to whitelisted news domains. Posts are ranked using a sophisticated algorithm that considers
+                share count, engagement metrics, and time decay to surface the most relevant and timely news.</p>
+            </div>
+            
+            <h2>Key Features</h2>
+            <ul class="feature-list">
+                <li><strong>Curated Sources:</strong> Only posts from trusted, high-quality news domains</li>
+                <li><strong>Smart Ranking:</strong> Articles ranked by popularity and freshness</li>
+                <li><strong>Real-time Updates:</strong> Continuously monitors the Bluesky firehose</li>
+                <li><strong>Engagement Tracking:</strong> Tracks shares, likes, and reposts</li>
+                <li><strong>Time Decay:</strong> Recent articles get priority over older ones</li>
+                <li><strong>Public Access:</strong> Only shows publicly visible posts</li>
+            </ul>
+            
+            <h2>Whitelisted Domains</h2>
+            <p>
+                This feed includes posts linking to the following {len(domains)} trusted news sources
+                (listed alphabetically):
+            </p>
+            
+            <ul class="domain-list">
+{domain_list_html}            </ul>
+            
+            <div class="highlight" style="margin-top: 30px;">
+                <p><strong>Note:</strong> The feed matches both the main domain and all subdomains.
+                For example, "nytimes.com" will match posts from "www.nytimes.com", "cooking.nytimes.com", etc.</p>
+            </div>
+            
+            <div class="nav-buttons">
+                <a href="/preview" class="btn">View Feed Preview</a>
+                <a href="/stats" class="btn btn-secondary">View Statistics</a>
+                <a href="/" class="btn btn-secondary">Home</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    
+    return HTMLResponse(content=html_content)
 
 
 # For running with uvicorn directly
