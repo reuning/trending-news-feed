@@ -21,6 +21,7 @@ class URLExtractor:
         'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid',
         '_ga', '_gl', 'ref', 'source', 'campaign',
         'link_source', 'taid', 'user_email',
+        'smid', 'unlocked_article_code', "cmp",
     }
 
     def __init__(self, remove_tracking_params: bool = True):
