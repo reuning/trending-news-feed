@@ -626,24 +626,24 @@ async def about_page():
             <h1>About This Feed</h1>
             
             <p>
-                Welcome to the <strong>Bluesky Domain Feed</strong> – a curated news feed that surfaces
-                the most shared and discussed articles from trusted news sources on Bluesky.
+                This feed displays posts from Bluesky that link to specific news domains.
             </p>
             
             <div class="highlight">
-                <p><strong>How it works:</strong> This feed monitors Bluesky for posts containing links
-                to whitelisted news domains. Posts are ranked using a sophisticated algorithm that considers
-                share count, engagement metrics, and time decay to surface the most relevant and timely news.</p>
+                <p><strong>How it works:</strong> The feed monitors the Bluesky firehose for posts containing links
+                to the whitelisted domains listed below. Posts are ranked by a score calculated from the number of times
+                the URL has been shared, with a time decay factor that reduces the score of older posts. Posts older than
+                72 hours are excluded. The feed shows up to 2 posts per unique URL.</p>
             </div>
             
-            <h2>Key Features</h2>
+            <h2>Features</h2>
             <ul class="feature-list">
-                <li><strong>Curated Sources:</strong> Only posts from trusted, high-quality news domains</li>
-                <li><strong>Smart Ranking:</strong> Articles ranked by popularity and freshness</li>
-                <li><strong>Real-time Updates:</strong> Continuously monitors the Bluesky firehose</li>
-                <li><strong>Engagement Tracking:</strong> Tracks shares, likes, and reposts</li>
-                <li><strong>Time Decay:</strong> Recent articles get priority over older ones</li>
-                <li><strong>Public Access:</strong> Only shows publicly visible posts</li>
+                <li>Filters posts to only include links from whitelisted domains</li>
+                <li>Ranks posts by share count with time decay (decay rate: 0.6)</li>
+                <li>Monitors the Bluesky firehose in real-time</li>
+                <li>Tracks URL shares and reposts (repost weight: 0.5)</li>
+                <li>Excludes posts older than 72 hours</li>
+                <li>Shows only publicly visible posts</li>
             </ul>
             
             <h2>Whitelisted Domains</h2>
