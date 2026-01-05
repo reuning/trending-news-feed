@@ -116,11 +116,11 @@ async def test_calculate_score_basic(test_db):
     config = RankingConfig(decay_rate=0.05)
     engine = RankingEngine(test_db, config)
     
-    # Score = share_count * exp(-0.05 * age_hours)
-    score = engine.calculate_score(share_count=10, age_hours=0)
+    # Score = share_count * exp(-0.05 * url_age_hours)
+    score = engine.calculate_score(share_count=10, url_age_hours=0)
     assert abs(score - 10.0) < 0.01  # No decay at age 0
     
-    score = engine.calculate_score(share_count=10, age_hours=1)
+    score = engine.calculate_score(share_count=10, url_age_hours=1)
     expected = 10 * math.exp(-0.05 * 1)
     assert abs(score - expected) < 0.01
 
@@ -185,14 +185,14 @@ async def test_calculate_age_hours(test_db):
     """Test age calculation in hours."""
     engine = RankingEngine(test_db)
     
-    # Post from 1 hour ago
-    created_at = datetime.utcnow() - timedelta(hours=1)
-    age = engine._calculate_age_hours(created_at)
+    # URL first seen 1 hour ago
+    first_seen = datetime.utcnow() - timedelta(hours=1)
+    age = engine._calculate_age_hours(first_seen)
     assert abs(age - 1.0) < 0.1  # Allow small variance
     
-    # Post from 24 hours ago
-    created_at = datetime.utcnow() - timedelta(hours=24)
-    age = engine._calculate_age_hours(created_at)
+    # URL first seen 24 hours ago
+    first_seen = datetime.utcnow() - timedelta(hours=24)
+    age = engine._calculate_age_hours(first_seen)
     assert abs(age - 24.0) < 0.1
 
 
@@ -228,7 +228,7 @@ async def test_rank_posts_single_post(test_db):
     assert ranked[0]["uri"] == "at://did:plc:user1/app.bsky.feed.post/1"
     assert ranked[0]["share_count"] == 1
     assert "score" in ranked[0]
-    assert "age_hours" in ranked[0]
+    assert "url_age_hours" in ranked[0]
 
 
 @pytest.mark.asyncio
@@ -660,13 +660,13 @@ async def test_calculate_score_with_repost_count(test_db):
     engine = RankingEngine(test_db, config)
     
     # Score with 0 reposts (treated as 1)
-    score_0 = engine.calculate_score(share_count=10, age_hours=1, repost_count=0)
+    score_0 = engine.calculate_score(share_count=10, url_age_hours=1, repost_count=0)
     
     # Score with 1 repost
-    score_1 = engine.calculate_score(share_count=10, age_hours=1, repost_count=1)
+    score_1 = engine.calculate_score(share_count=10, url_age_hours=1, repost_count=1)
     
     # Score with 5 reposts
-    score_5 = engine.calculate_score(share_count=10, age_hours=1, repost_count=5)
+    score_5 = engine.calculate_score(share_count=10, url_age_hours=1, repost_count=5)
     
     # 0 reposts should be treated as 1 (neutral multiplier)
     assert abs(score_0 - score_1) < 0.01

@@ -496,6 +496,7 @@ class Database:
                     "share_count": url.share_count,
                     "shared_at": post_url.shared_at,
                     "repost_count": post.repost_count,
+                    "url_first_seen": url.first_seen,
                 })
             
             return posts
@@ -547,6 +548,7 @@ class Database:
                     "share_count": url.share_count,
                     "shared_at": post_url.shared_at,
                     "repost_count": post.repost_count,
+                    "url_first_seen": url.first_seen,
                 })
             
             return posts

@@ -648,7 +648,7 @@ async def about_page():
             <div class="highlight">
                 <p><strong>How it works:</strong> The feed monitors the Bluesky firehose for posts containing links
                 to the whitelisted domains listed below. Posts are ranked by a score calculated from the number of times
-                the URL has been shared, with a time decay factor that reduces the score of older posts. Posts older than
+                the URL has been shared, with a time decay factor that reduces the score of older urls. Posts older than
                 {max_age_hours} hours are excluded.{f' The feed shows up to {max_posts_per_url} posts per unique URL.' if max_posts_per_url else ''}</p>
             </div>
             

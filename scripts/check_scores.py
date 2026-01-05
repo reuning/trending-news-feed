@@ -46,7 +46,7 @@ def format_post_info(post: Dict[str, Any], detailed: bool = False, config: Optio
     lines.append(f"\n{'='*80}")
     lines.append(f"URI: {post['uri']}")
     lines.append(f"Author: {post['author_did']}")
-    lines.append(f"Created: {post['created_at']}")
+    lines.append(f"Post Created: {post['created_at']}")
     lines.append(f"URL: {post['url']}")
     lines.append(f"Domain: {post['domain']}")
     
@@ -57,14 +57,16 @@ def format_post_info(post: Dict[str, Any], detailed: bool = False, config: Optio
     lines.append(f"\n--- Scoring Factors ---")
     lines.append(f"Share Count: {post['share_count']}")
     lines.append(f"Repost Count: {post.get('repost_count', 0)}")
-    lines.append(f"Age (hours): {post.get('age_hours', 0):.2f}")
+    lines.append(f"URL Age (hours): {post.get('url_age_hours', 0):.2f}")
+    if 'url_first_seen' in post:
+        lines.append(f"URL First Seen: {post['url_first_seen']}")
     lines.append(f"SCORE: {post.get('score', 0):.4f}")
     
     if detailed and 'score' in post:
         lines.append(f"\n--- Score Breakdown ---")
         # Recreate the calculation for transparency
         import math
-        age_hours = post.get('age_hours', 0)
+        url_age_hours = post.get('url_age_hours', 0)
         share_count = post['share_count']
         repost_count = post.get('repost_count', 0)
         
@@ -77,13 +79,13 @@ def format_post_info(post: Dict[str, Any], detailed: bool = False, config: Optio
             decay_rate = 0.05
             repost_weight = 1.0
         
-        decay_factor = math.exp(-decay_rate * age_hours)
+        decay_factor = math.exp(-decay_rate * url_age_hours)
         effective_repost = max(1, repost_count)
         weighted_repost = math.pow(effective_repost, repost_weight)
         
         lines.append(f"  Decay rate: {decay_rate}")
         lines.append(f"  Repost weight: {repost_weight}")
-        lines.append(f"  Decay factor: exp(-{decay_rate} * {age_hours:.2f}) = {decay_factor:.4f}")
+        lines.append(f"  Decay factor: exp(-{decay_rate} * {url_age_hours:.2f}) = {decay_factor:.4f}")
         lines.append(f"  Effective repost: max(1, {repost_count}) = {effective_repost}")
         lines.append(f"  Weighted repost: {effective_repost}^{repost_weight} = {weighted_repost:.4f}")
         lines.append(f"  Formula: {weighted_repost:.4f} * {share_count} * {decay_factor:.4f}")
@@ -116,19 +118,19 @@ def compare_posts(post1: Dict[str, Any], post2: Dict[str, Any]) -> str:
     lines.append(f"\n{'FACTORS':<40} | {'FACTORS':<40}")
     lines.append(f"Share Count: {post1['share_count']:<28} | Share Count: {post2['share_count']:<28}")
     lines.append(f"Repost Count: {post1.get('repost_count', 0):<27} | Repost Count: {post2.get('repost_count', 0):<27}")
-    lines.append(f"Age (hours): {post1.get('age_hours', 0):<28.2f} | Age (hours): {post2.get('age_hours', 0):<28.2f}")
+    lines.append(f"URL Age (hours): {post1.get('url_age_hours', 0):<24.2f} | URL Age (hours): {post2.get('url_age_hours', 0):<24.2f}")
     
     # Difference analysis
     lines.append(f"\n{'DIFFERENCES':<40}")
     score_diff = post1.get('score', 0) - post2.get('score', 0)
     share_diff = post1['share_count'] - post2['share_count']
     repost_diff = post1.get('repost_count', 0) - post2.get('repost_count', 0)
-    age_diff = post1.get('age_hours', 0) - post2.get('age_hours', 0)
+    url_age_diff = post1.get('url_age_hours', 0) - post2.get('url_age_hours', 0)
     
     lines.append(f"Score difference: {score_diff:+.4f}")
     lines.append(f"Share count difference: {share_diff:+d}")
     lines.append(f"Repost count difference: {repost_diff:+d}")
-    lines.append(f"Age difference: {age_diff:+.2f} hours")
+    lines.append(f"URL age difference: {url_age_diff:+.2f} hours")
     
     # Analysis
     lines.append(f"\n{'ANALYSIS':<40}")
@@ -140,16 +142,16 @@ def compare_posts(post1: Dict[str, Any], post2: Dict[str, Any]) -> str:
             lines.append(f"  - Higher share count (+{share_diff})")
         if repost_diff > 0:
             lines.append(f"  - More reposts (+{repost_diff})")
-        if age_diff < 0:
-            lines.append(f"  - Newer by {abs(age_diff):.2f} hours")
+        if url_age_diff < 0:
+            lines.append(f"  - URL is newer by {abs(url_age_diff):.2f} hours")
     else:
         lines.append("Post 2 scores higher because:")
         if share_diff < 0:
             lines.append(f"  - Higher share count (+{abs(share_diff)})")
         if repost_diff < 0:
             lines.append(f"  - More reposts (+{abs(repost_diff)})")
-        if age_diff > 0:
-            lines.append(f"  - Newer by {age_diff:.2f} hours")
+        if url_age_diff > 0:
+            lines.append(f"  - URL is newer by {url_age_diff:.2f} hours")
     
     lines.append(f"{'='*80}")
     return "\n".join(lines)

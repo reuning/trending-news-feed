@@ -2,14 +2,14 @@
 Ranking engine for the Bluesky domain-based feed generator.
 
 This module implements a time-decay ranking algorithm that balances
-URL share count, post repost count, and post freshness. Posts are scored using:
-    score = repost_count * share_count * exp(-decay_rate * age_in_hours)
+URL share count, post repost count, and URL freshness. Posts are scored using:
+    score = repost_count * share_count * exp(-decay_rate * url_age_in_hours)
 
 This ensures:
 - Popular URLs (high share count) rank higher
 - Popular posts (high repost count) rank higher
-- Recent posts get boosted
-- Very old posts decay even if popular
+- Recent URLs get boosted (based on when URL was first seen)
+- Very old URLs decay even if popular
 """
 
 import base64
@@ -118,15 +118,15 @@ class RankingEngine:
     """
     Ranking engine that scores posts using time-decay algorithm with repost multiplier.
     
-    The algorithm balances URL popularity, post popularity, and freshness:
-        score = repost_count * share_count * exp(-decay_rate * age_in_hours)
+    The algorithm balances URL popularity, post popularity, and URL freshness:
+        score = repost_count * share_count * exp(-decay_rate * url_age_in_hours)
     
     This ensures:
     - Popular URLs (high share count) rank higher
     - Popular posts (high repost count) rank higher
-    - Recent posts get boosted
-    - Very old posts decay even if popular
-    - Balance between URL virality, post virality, and freshness
+    - Recent URLs get boosted (based on when URL was first seen)
+    - Very old URLs decay even if popular
+    - Balance between URL virality, post virality, and URL freshness
     """
     
     def __init__(
@@ -148,13 +148,13 @@ class RankingEngine:
     def calculate_score(
         self,
         share_count: int,
-        age_hours: float,
+        url_age_hours: float,
         repost_count: int = 0,
     ) -> float:
         """
         Calculate time-decay score for a post with repost multiplier.
         
-        Formula: score = (repost_count ^ repost_weight) * share_count * exp(-decay_rate * age_hours)
+        Formula: score = (repost_count ^ repost_weight) * share_count * exp(-decay_rate * url_age_hours)
         
         The repost_weight parameter allows tuning the influence of reposts:
         - repost_weight = 1.0: Linear influence (default)
@@ -163,7 +163,7 @@ class RankingEngine:
         
         Args:
             share_count: Number of times the URL has been shared
-            age_hours: Age of the post in hours
+            url_age_hours: Age of the URL in hours (based on when URL was first seen)
             repost_count: Number of times this specific post has been reposted
         
         Returns:
@@ -171,15 +171,15 @@ class RankingEngine:
         
         Examples:
             >>> engine = RankingEngine(db)  # default repost_weight=1.0
-            >>> engine.calculate_score(10, 1, 5)   # 10 shares, 1 hour old, 5 reposts
+            >>> engine.calculate_score(10, 1, 5)   # 10 shares, URL 1 hour old, 5 reposts
             47.55  # 5^1.0 * 10 * exp(-0.05 * 1)
-            >>> engine.calculate_score(10, 24, 1)  # 10 shares, 24 hours old, 1 repost
+            >>> engine.calculate_score(10, 24, 1)  # 10 shares, URL 24 hours old, 1 repost
             3.01   # 1^1.0 * 10 * exp(-0.05 * 24)
-            >>> engine.calculate_score(5, 1, 0)    # 5 shares, 1 hour old, 0 reposts
+            >>> engine.calculate_score(5, 1, 0)    # 5 shares, URL 1 hour old, 0 reposts
             4.76   # max(1, 0)^1.0 * 5 * exp(-0.05 * 1)
         """
-        # Exponential decay: e^(-λt)
-        decay_factor = math.exp(-self.config.decay_rate * age_hours)
+        # Exponential decay: e^(-λt) based on URL age
+        decay_factor = math.exp(-self.config.decay_rate * url_age_hours)
         
         # Use max(1, repost_count) to ensure posts with 0 reposts still get scored
         # This way a post with 0 reposts acts as if it has 1 repost (neutral multiplier)
@@ -192,18 +192,18 @@ class RankingEngine:
         score = weighted_repost_count * share_count * decay_factor
         return score
     
-    def _calculate_age_hours(self, created_at: datetime) -> float:
+    def _calculate_age_hours(self, first_seen: datetime) -> float:
         """
-        Calculate age of a post in hours.
+        Calculate age of a URL in hours.
         
         Args:
-            created_at: Post creation timestamp
+            first_seen: URL first seen timestamp
         
         Returns:
             Age in hours (float)
         """
         now = datetime.utcnow()
-        age = now - created_at
+        age = now - first_seen
         return age.total_seconds() / 3600  # Convert to hours
     
     def _encode_cursor(self, score: float, uri: str) -> str:
@@ -259,7 +259,7 @@ class RankingEngine:
         
         This method:
         1. Queries recent posts from database
-        2. Filters by age and minimum share count
+        2. Filters by URL age and minimum share count
         3. Calculates score for each post (including repost multiplier)
         4. Sorts by score (highest first)
         5. Returns top N posts
@@ -280,7 +280,7 @@ class RankingEngine:
                 - domain: URL domain
                 - share_count: Number of shares
                 - repost_count: Number of reposts
-                - age_hours: Age in hours
+                - url_age_hours: Age of URL in hours (based on first seen)
                 - score: Calculated ranking score
         """
         if limit is None:
@@ -303,11 +303,11 @@ class RankingEngine:
         # Calculate scores and filter
         scored_posts = []
         for post in posts:
-            # Calculate age
-            age_hours = self._calculate_age_hours(post["created_at"])
+            # Calculate URL age (based on when URL was first seen)
+            url_age_hours = self._calculate_age_hours(post["url_first_seen"])
             
-            # Filter by max age
-            if age_hours > self.config.max_age_hours:
+            # Filter by max age (based on URL age)
+            if url_age_hours > self.config.max_age_hours:
                 continue
             
             # Filter by minimum share count
@@ -318,17 +318,17 @@ class RankingEngine:
             if post.get("repost_count", 0) < self.config.min_repost_count:
                 continue
             
-            # Calculate score
+            # Calculate score based on URL age
             score = self.calculate_score(
                 post["share_count"],
-                age_hours,
+                url_age_hours,
                 post.get("repost_count", 0)
             )
             
-            # Add score and age to post data
+            # Add score and URL age to post data
             scored_post = {
                 **post,
-                "age_hours": age_hours,
+                "url_age_hours": url_age_hours,
                 "score": score,
             }
             scored_posts.append(scored_post)
