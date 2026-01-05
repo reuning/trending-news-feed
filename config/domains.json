@@ -3,6 +3,7 @@
     "nytimes.com",
     "washingtonpost.com",
     "bbc.com",
+    "bbc.co.uk",
     "reuters.com",
     "apnews.com",
     "wsj.com",
@@ -18,7 +19,8 @@
     "statesnewsroom.com",
     "thehandbasket.co",
     "zeteo.com",
-    "theguardian.com"
+    "theguardian.com",
+    "cbsnews.com"
   ],
   "match_subdomains": true
 }
