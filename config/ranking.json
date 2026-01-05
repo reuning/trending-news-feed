@@ -1,5 +1,5 @@
 {
-  "decay_rate": 0.05,
+  "decay_rate": 0.6,
   "max_age_hours": 72,
   "min_share_count": 1,
   "min_repost_count": 0,
